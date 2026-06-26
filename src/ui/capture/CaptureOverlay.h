@@ -1,0 +1,99 @@
+#ifndef CAPTUREOVERLAY_H
+#define CAPTUREOVERLAY_H
+
+#include "CaptureAnnotation.h"
+#include "CaptureTool.h"
+
+#include <QImage>
+#include <QPainterPath>
+#include <QRect>
+#include <QUndoStack>
+#include <QWidget>
+
+class CaptureToolbar;
+class QPainter;
+
+enum class CaptureState
+{
+    Selecting,
+    Editing,
+    Finished,
+    Canceled
+};
+
+class CaptureOverlay : public QWidget
+{
+    Q_OBJECT
+
+public:
+    CaptureOverlay(const QImage& desktopImage,
+                   const QRect& virtualGeometry,
+                   QWidget* parent = nullptr);
+
+    CaptureState state() const;
+    void enterEditing(const QRect& imageRect);
+    void addAnnotation(std::unique_ptr<Annotation> annotation);
+    bool canUndo() const;
+    bool canRedo() const;
+    void undo();
+    void redo();
+    QImage renderResultImage() const;
+
+signals:
+    void canceled();
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
+
+private:
+    QPoint widgetToImage(const QPointF& widgetPos) const;
+    QPointF widgetToSelection(const QPointF& widgetPos) const;
+    QRect imageToWidgetRect(const QRect& imageRect) const;
+    QRect normalizedImageSelection() const;
+    QRect rectFromImagePoints(const QPoint& first, const QPoint& second) const;
+    bool imagePointInSelection(const QPoint& imagePoint) const;
+    QPointF clampSelectionPoint(const QPointF& point) const;
+    void beginAnnotation(const QPointF& selectionPos);
+    void updateAnnotation(const QPointF& selectionPos);
+    void finishAnnotation(const QPointF& selectionPos);
+    void createTextAnnotation(const QPointF& selectionPos);
+    bool previewIsLargeEnough() const;
+    void clearAnnotationState();
+    void clearAnnotationsAndHistory();
+    void paintSelection(QPainter& painter, const QRect& selection) const;
+    void paintAnnotations(QPainter& painter, const QRect& widgetSelection, bool includePreview) const;
+    void paintSelectionChrome(QPainter& painter, const QRect& widgetSelection, const QRect& selection) const;
+    void updateToolbarGeometry();
+    void setCurrentTool(CaptureTool tool);
+    void copyAndClose();
+    void saveAndClose();
+    void cancelAndClose();
+    void reselect();
+    void showPinPlaceholder();
+
+    QImage m_desktopImage;
+    QRect m_virtualGeometry;
+    CaptureState m_state = CaptureState::Selecting;
+    QPoint m_selectionStart;
+    QPoint m_selectionEnd;
+    QRect m_selectionImageRect;
+    AnnotationList m_annotations;
+    std::unique_ptr<Annotation> m_previewAnnotation;
+    QUndoStack m_undoStack;
+    CaptureToolbar* m_toolbar = nullptr;
+    CaptureTool m_currentTool = CaptureTool::Rect;
+    QPen m_annotationPen = QPen(Qt::red, 3.0);
+    QPointF m_annotationStart;
+    QPainterPath m_activePath;
+    int m_penPointCount = 0;
+    bool m_selecting = false;
+    bool m_hasSelection = false;
+    bool m_drawingAnnotation = false;
+};
+
+#endif // CAPTUREOVERLAY_H
