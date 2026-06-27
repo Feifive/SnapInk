@@ -62,13 +62,13 @@ void MainWindow::startRegionCapture()
     }
 
     const QRect virtualGeometry = ScreenCaptureService::virtualDesktopGeometry();
-    const QImage desktopImage = ScreenCaptureService::captureVirtualDesktop();
-    if (virtualGeometry.isEmpty() || desktopImage.isNull()) {
+    CaptureResult captureResult = ScreenCaptureService::captureScreens();
+    if (virtualGeometry.isEmpty() || captureResult.screens().isEmpty()) {
         showCaptureUnavailable();
         return;
     }
 
-    auto* overlay = new CaptureOverlay(desktopImage, virtualGeometry);
+    auto* overlay = new CaptureOverlay(std::move(captureResult), virtualGeometry);
     showOverlay(overlay);
 }
 
@@ -79,14 +79,14 @@ void MainWindow::startFullScreenCapture()
     }
 
     const QRect virtualGeometry = ScreenCaptureService::virtualDesktopGeometry();
-    const QImage desktopImage = ScreenCaptureService::captureVirtualDesktop();
-    if (virtualGeometry.isEmpty() || desktopImage.isNull()) {
+    CaptureResult captureResult = ScreenCaptureService::captureScreens();
+    if (virtualGeometry.isEmpty() || captureResult.screens().isEmpty()) {
         showCaptureUnavailable();
         return;
     }
 
-    auto* overlay = new CaptureOverlay(desktopImage, virtualGeometry);
-    overlay->enterEditing(QRect(QPoint(0, 0), desktopImage.size()));
+    auto* overlay = new CaptureOverlay(std::move(captureResult), virtualGeometry);
+    overlay->enterEditing(QRect(QPoint(0, 0), virtualGeometry.size()));
     showOverlay(overlay);
 }
 

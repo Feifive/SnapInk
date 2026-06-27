@@ -1,7 +1,6 @@
 #include "ScreenCaptureService.h"
 
 #include <QGuiApplication>
-#include <QPainter>
 #include <QPixmap>
 #include <QScreen>
 
@@ -9,60 +8,53 @@ QRect ScreenCaptureService::virtualDesktopGeometry()
 {
     QRect virtualGeometry;
 
-    const QList<QScreen*> screens = QGuiApplication::screens();
-    for (QScreen* screen : screens) {
+    const QList<QScreen *> screens = QGuiApplication::screens();
+    for (QScreen *screen : screens) {
         if (screen == nullptr) {
             continue;
         }
 
         const QRect screenGeometry = screen->geometry();
         virtualGeometry = virtualGeometry.isNull()
-                              ? screenGeometry
-                              : virtualGeometry.united(screenGeometry);
+                        ? screenGeometry
+                        : virtualGeometry.united(screenGeometry);
     }
 
     return virtualGeometry;
 }
 
-QImage ScreenCaptureService::captureVirtualDesktop()
+CaptureResult ScreenCaptureService::captureScreens()
 {
-    const QList<QScreen*> screens = QGuiApplication::screens();
-    const QRect virtualGeometry = virtualDesktopGeometry();
-    if (screens.isEmpty() || virtualGeometry.isEmpty()) {
-        return {};
-    }
+    const QList<QScreen *> screens = QGuiApplication::screens();
+    QList<CapturedScreen> capturedList;
+    capturedList.reserve(screens.size());
 
-    QImage result(virtualGeometry.size(), QImage::Format_ARGB32);
-    result.fill(Qt::transparent);
-
-    QPainter painter(&result);
-    bool capturedAnyScreen = false;
-
-    for (QScreen* screen : screens) {
+    for (QScreen *screen : screens) {
         if (screen == nullptr) {
             continue;
         }
 
-        const QRect screenGeometry = screen->geometry();
+        // grabWindow(0) returns the entire screen in physical (device) pixels
+        // on high-DPI displays.  We preserve this raw data without any scaling.
         const QPixmap pixmap = screen->grabWindow(0);
         if (pixmap.isNull()) {
             continue;
         }
 
-        const QImage captured = pixmap.toImage().convertToFormat(QImage::Format_ARGB32);
-        const QPoint targetTopLeft = screenGeometry.topLeft() - virtualGeometry.topLeft();
+        const QRect logicalGeometry = screen->geometry();
+        const qreal dpr = pixmap.devicePixelRatio();
 
-        // Draw into the logical screen rectangle so mixed-DPI pixmaps still map to
-        // the same coordinate space used by the overlay and editor.
-        painter.drawImage(QRect(targetTopLeft, screenGeometry.size()), captured);
-        capturedAnyScreen = true;
+        QImage image = pixmap.toImage().convertToFormat(QImage::Format_ARGB32);
+        image.setDevicePixelRatio(dpr);
+
+        CapturedScreen captured;
+        captured.screen = screen;
+        captured.logicalGeometry = logicalGeometry;
+        captured.image = std::move(image);
+        captured.devicePixelRatio = dpr;
+
+        capturedList.append(std::move(captured));
     }
 
-    painter.end();
-
-    if (!capturedAnyScreen) {
-        return {};
-    }
-
-    return result;
+    return CaptureResult(std::move(capturedList));
 }

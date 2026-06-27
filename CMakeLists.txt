@@ -6,6 +6,7 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Test)
 qt_standard_project_setup()
 
 set(SNAPINK_CORE_SOURCES
+    src/core/capture/CapturedScreen.h
     src/core/capture/ScreenCaptureService.cpp
     src/core/capture/ScreenCaptureService.h
     src/core/clipboard/ClipboardService.cpp
