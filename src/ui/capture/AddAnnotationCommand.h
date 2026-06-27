@@ -1,18 +1,18 @@
 #ifndef CAPTURE_ADDANNOTATIONCOMMAND_H
 #define CAPTURE_ADDANNOTATIONCOMMAND_H
 
-#include "CaptureAnnotation.h"
-
 #include <QUndoCommand>
 
 #include <functional>
-#include <memory>
+
+class QGraphicsItem;
+class QGraphicsScene;
 
 class AddAnnotationCommand : public QUndoCommand
 {
 public:
-    AddAnnotationCommand(AnnotationList* annotations,
-                         std::unique_ptr<Annotation> annotation,
+    AddAnnotationCommand(QGraphicsScene* scene,
+                         QGraphicsItem* item,
                          std::function<void()> changed,
                          QUndoCommand* parent = nullptr);
     ~AddAnnotationCommand() override;
@@ -21,10 +21,9 @@ public:
     void redo() override;
 
 private:
-    AnnotationList* m_annotations = nullptr;
-    std::unique_ptr<Annotation> m_annotation;
+    QGraphicsScene* m_scene = nullptr;
+    QGraphicsItem* m_item = nullptr;
     std::function<void()> m_changed;
-    int m_index = -1;
     bool m_inserted = false;
 };
 

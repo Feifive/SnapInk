@@ -4,6 +4,7 @@
 enum class CaptureTool
 {
     None,
+    Select,
     Rect,
     Arrow,
     Pen,

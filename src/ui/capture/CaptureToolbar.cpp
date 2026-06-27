@@ -23,12 +23,13 @@ CaptureToolbar::CaptureToolbar(QWidget* parent)
     auto* tools = new QButtonGroup(this);
     tools->setExclusive(true);
 
+    m_selectButton = addToolButton(QStringLiteral("Select"), QStringLiteral("Select / adjust region"), CaptureTool::Select);
     m_rectButton = addToolButton(QStringLiteral("Rect"), QStringLiteral("Rectangle"), CaptureTool::Rect);
     m_arrowButton = addToolButton(QStringLiteral("Arrow"), QStringLiteral("Arrow"), CaptureTool::Arrow);
     m_penButton = addToolButton(QStringLiteral("Pen"), QStringLiteral("Pen"), CaptureTool::Pen);
     m_textButton = addToolButton(QStringLiteral("Text"), QStringLiteral("Text"), CaptureTool::Text);
 
-    for (QToolButton* button : {m_rectButton, m_arrowButton, m_penButton, m_textButton}) {
+    for (QToolButton* button : {m_selectButton, m_rectButton, m_arrowButton, m_penButton, m_textButton}) {
         tools->addButton(button);
         layout->addWidget(button);
     }
@@ -53,6 +54,7 @@ CaptureToolbar::CaptureToolbar(QWidget* parent)
         layout->addWidget(button);
     }
 
+    connect(m_selectButton, &QToolButton::clicked, this, [this]() { Q_EMIT toolSelected(CaptureTool::Select); });
     connect(m_rectButton, &QToolButton::clicked, this, [this]() { Q_EMIT toolSelected(CaptureTool::Rect); });
     connect(m_arrowButton, &QToolButton::clicked, this, [this]() { Q_EMIT toolSelected(CaptureTool::Arrow); });
     connect(m_penButton, &QToolButton::clicked, this, [this]() { Q_EMIT toolSelected(CaptureTool::Pen); });
@@ -66,13 +68,14 @@ CaptureToolbar::CaptureToolbar(QWidget* parent)
     connect(cancelButton, &QToolButton::clicked, this, &CaptureToolbar::cancelRequested);
     connect(confirmButton, &QToolButton::clicked, this, &CaptureToolbar::confirmRequested);
 
-    setCurrentTool(CaptureTool::Rect);
+    setCurrentTool(CaptureTool::Select);
     setUndoAvailable(false);
     setRedoAvailable(false);
 }
 
 void CaptureToolbar::setCurrentTool(CaptureTool tool)
 {
+    m_selectButton->setChecked(tool == CaptureTool::Select);
     m_rectButton->setChecked(tool == CaptureTool::Rect);
     m_arrowButton->setChecked(tool == CaptureTool::Arrow);
     m_penButton->setChecked(tool == CaptureTool::Pen);

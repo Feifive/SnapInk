@@ -2,19 +2,23 @@
 
 #include "AddAnnotationCommand.h"
 #include "CaptureToolbar.h"
+#include "../pin/PinWindow.h"
 #include "../../core/clipboard/ClipboardService.h"
 
 #include <QDateTime>
 #include <QDir>
+#include <QEvent>
 #include <QFileDialog>
-#include <QInputDialog>
+#include <QGraphicsPixmapItem>
+#include <QGraphicsScene>
+#include <QGraphicsView>
 #include <QKeyEvent>
-#include <QLineEdit>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QResizeEvent>
 #include <QStandardPaths>
+#include <QWheelEvent>
 
 namespace
 {
@@ -22,6 +26,7 @@ constexpr int kDimAlpha = 120;
 constexpr int kMinimumSelectionSize = 2;
 constexpr qreal kMinimumArrowLength = 4.0;
 constexpr int kHandleRadius = 4;
+constexpr int kHandleHitRadius = 8;
 constexpr int kToolbarGap = 8;
 
 QString defaultSavePath()
@@ -37,9 +42,32 @@ QString defaultSavePath()
 }
 }
 
-// ---------------------------------------------------------------------------
-// Construction
-// ---------------------------------------------------------------------------
+class SelectionChromeLayer final : public QWidget
+{
+public:
+    explicit SelectionChromeLayer(CaptureOverlay* overlay)
+        : QWidget(overlay)
+        , m_overlay(overlay)
+    {
+        setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        setAttribute(Qt::WA_TranslucentBackground, true);
+        setAutoFillBackground(false);
+        hide();
+    }
+
+protected:
+    void paintEvent(QPaintEvent* event) override
+    {
+        Q_UNUSED(event)
+
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        m_overlay->paintCurrentSelectionChrome(painter);
+    }
+
+private:
+    CaptureOverlay* m_overlay = nullptr;
+};
 
 CaptureOverlay::CaptureOverlay(CaptureResult captureResult,
                                const QRect& virtualGeometry,
@@ -48,6 +76,7 @@ CaptureOverlay::CaptureOverlay(CaptureResult captureResult,
     , m_captureResult(std::move(captureResult))
     , m_virtualGeometry(virtualGeometry)
     , m_toolbar(new CaptureToolbar(this))
+    , m_selectionChromeLayer(new SelectionChromeLayer(this))
 {
     m_annotationPen.setCapStyle(Qt::RoundCap);
     m_annotationPen.setJoinStyle(Qt::RoundJoin);
@@ -56,8 +85,10 @@ CaptureOverlay::CaptureOverlay(CaptureResult captureResult,
     setAttribute(Qt::WA_DeleteOnClose, true);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
-    setCursor(Qt::CrossCursor);
+    setCursor(Qt::ArrowCursor);
     setGeometry(m_virtualGeometry);
+
+    setupAnnotationView();
 
     m_toolbar->hide();
     m_toolbar->setCurrentTool(m_currentTool);
@@ -68,7 +99,7 @@ CaptureOverlay::CaptureOverlay(CaptureResult captureResult,
     connect(m_toolbar, &CaptureToolbar::reselectRequested, this, &CaptureOverlay::reselect);
     connect(m_toolbar, &CaptureToolbar::copyRequested, this, &CaptureOverlay::copyAndClose);
     connect(m_toolbar, &CaptureToolbar::saveRequested, this, &CaptureOverlay::saveAndClose);
-    connect(m_toolbar, &CaptureToolbar::pinRequested, this, &CaptureOverlay::showPinPlaceholder);
+    connect(m_toolbar, &CaptureToolbar::pinRequested, this, &CaptureOverlay::pinAndClose);
     connect(m_toolbar, &CaptureToolbar::cancelRequested, this, &CaptureOverlay::cancelAndClose);
     connect(m_toolbar, &CaptureToolbar::confirmRequested, this, &CaptureOverlay::copyAndClose);
     connect(&m_undoStack, &QUndoStack::canUndoChanged, m_toolbar, &CaptureToolbar::setUndoAvailable);
@@ -97,24 +128,33 @@ void CaptureOverlay::enterEditing(const QRect& imageRect)
     m_hasSelection = true;
     m_selecting = false;
     m_state = CaptureState::Editing;
-    setCursor(Qt::CrossCursor);
+
+    prepareAnnotationScene();
+    syncAnnotationViewGeometry();
+
+    setCurrentTool(CaptureTool::Select);
+    setCursor(Qt::ArrowCursor);
+    m_annotationView->show();
+    m_annotationView->raise();
+    m_selectionChromeLayer->setGeometry(rect());
+    m_selectionChromeLayer->show();
+    m_selectionChromeLayer->raise();
     m_toolbar->show();
     updateToolbarGeometry();
     update();
 }
 
-// ---------------------------------------------------------------------------
-// Annotation management
-// ---------------------------------------------------------------------------
-
-void CaptureOverlay::addAnnotation(std::unique_ptr<Annotation> annotation)
+void CaptureOverlay::addAnnotationItem(QGraphicsItem* item)
 {
-    if (annotation == nullptr || m_state != CaptureState::Editing) {
+    if (item == nullptr || m_state != CaptureState::Editing || m_annotationScene == nullptr) {
+        delete item;
         return;
     }
 
-    m_undoStack.push(new AddAnnotationCommand(&m_annotations, std::move(annotation), [this]() {
-        update();
+    m_undoStack.push(new AddAnnotationCommand(m_annotationScene, item, [this]() {
+        if (m_annotationScene != nullptr) {
+            m_annotationScene->update();
+        }
         updateToolbarGeometry();
     }));
 }
@@ -131,23 +171,23 @@ bool CaptureOverlay::canRedo() const
 
 void CaptureOverlay::undo()
 {
+    commitActiveTextEditing();
     m_undoStack.undo();
 }
 
 void CaptureOverlay::redo()
 {
+    commitActiveTextEditing();
     m_undoStack.redo();
 }
 
-// ---------------------------------------------------------------------------
-// Export (DPR-aware — preserves original physical pixels)
-// ---------------------------------------------------------------------------
-
 QImage CaptureOverlay::renderResultImage() const
 {
-    if (m_state != CaptureState::Editing || m_selectionImageRect.isEmpty()) {
+    if (m_state != CaptureState::Editing || m_selectionImageRect.isEmpty() || m_annotationScene == nullptr) {
         return {};
     }
+
+    const_cast<CaptureOverlay*>(this)->commitActiveTextEditing();
 
     const QRect selectionGlobal = overlayToGlobalLogical(m_selectionImageRect);
     const qreal effectiveDpr = effectiveDevicePixelRatio(selectionGlobal);
@@ -159,48 +199,14 @@ QImage CaptureOverlay::renderResultImage() const
 
     QPainter painter(&result);
     painter.setRenderHint(QPainter::Antialiasing, true);
-
-    // Scale the logical selection into physical output pixels so that
-    // annotations and target rects are automatically mapped.
     painter.scale(effectiveDpr, effectiveDpr);
 
-    // Composite each screen's original physical pixels into the output.
-    //
-    // When the screen's DPR equals the effective DPR this is a 1:1 pixel
-    // copy — zero quality loss.  When a screen has a lower DPR, QPainter
-    // performs the single necessary upscale during this final composite.
-    //
-    // Strategy: single-screen export is always lossless.  Multi-screen
-    // export with mixed DPR prioritises the highest DPR so most pixels
-    // stay 1:1; the lower-DPR fragment is upscaled once.
-    for (const CapturedScreen &screen : m_captureResult.screens()) {
-        const QRect overlapGlobal = selectionGlobal.intersected(screen.logicalGeometry);
-        if (overlapGlobal.isEmpty()) {
-            continue;
-        }
-
-        const QRect physicalSrc = m_captureResult.logicalToPhysical(screen, overlapGlobal);
-        if (physicalSrc.isEmpty()) {
-            continue;
-        }
-
-        // Target rect in selection-relative logical coordinates.
-        const QRect overlapLocal = globalToOverlayLogical(overlapGlobal);
-        const QPointF targetTopLeft(overlapLocal.topLeft() - m_selectionImageRect.topLeft());
-        const QRectF targetRect(targetTopLeft, QSizeF(overlapLocal.size()));
-
-        QImage sourceImage = screen.image;
-        sourceImage.setDevicePixelRatio(1.0);
-        painter.drawImage(targetRect, sourceImage, physicalSrc);
-    }
-
-    // Paint annotations in selection-relative logical coordinates.
-    // Because the painter is scaled by effectiveDpr, annotations are
-    // rendered at full physical resolution — no blurry downscale.
-    painter.setClipRect(QRectF(QPointF(0, 0), QSizeF(m_selectionImageRect.size())));
-
-    for (const std::unique_ptr<Annotation> &annotation : m_annotations) {
-        annotation->paint(painter);
+    if (m_previewItem != nullptr && m_previewItem->scene() == m_annotationScene) {
+        const_cast<QGraphicsScene*>(m_annotationScene)->removeItem(m_previewItem);
+        m_annotationScene->render(&painter, selectionSceneRect(), selectionSceneRect());
+        const_cast<QGraphicsScene*>(m_annotationScene)->addItem(m_previewItem);
+    } else {
+        m_annotationScene->render(&painter, selectionSceneRect(), selectionSceneRect());
     }
 
     painter.end();
@@ -208,11 +214,7 @@ QImage CaptureOverlay::renderResultImage() const
     return result;
 }
 
-// ---------------------------------------------------------------------------
-// Paint
-// ---------------------------------------------------------------------------
-
-void CaptureOverlay::paintEvent(QPaintEvent *event)
+void CaptureOverlay::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event)
 
@@ -220,8 +222,6 @@ void CaptureOverlay::paintEvent(QPaintEvent *event)
     painter.setRenderHint(QPainter::Antialiasing, true);
 
     paintBackground(painter);
-
-    // Dim everything …
     painter.fillRect(rect(), QColor(0, 0, 0, kDimAlpha));
 
     const QRect selection = normalizedImageSelection();
@@ -229,65 +229,39 @@ void CaptureOverlay::paintEvent(QPaintEvent *event)
         return;
     }
 
-    // … then undim the selection area by redrawing it at full brightness.
     const QRect widgetSelection = imageToWidgetRect(selection);
     painter.save();
     painter.setClipRect(widgetSelection);
     paintBackground(painter);
     painter.restore();
 
-    paintAnnotations(painter, widgetSelection, true);
-    paintSelectionChrome(painter, widgetSelection, selection);
+    if (m_annotationView == nullptr || !m_annotationView->isVisible()) {
+        paintSelectionChrome(painter, widgetSelection, selection);
+    }
 }
 
-void CaptureOverlay::paintBackground(QPainter &painter) const
+void CaptureOverlay::paintBackground(QPainter& painter) const
 {
-    // Draw each screen's physical image into its logical geometry rect within
-    // the widget.  Qt scales the physical pixels into the logical target
-    // rectangle — the widget backing store may have a higher device-pixel
-    // density and Qt will use it, so the preview looks sharp.
-    for (const CapturedScreen &screen : m_captureResult.screens()) {
+    for (const CapturedScreen& screen : m_captureResult.screens()) {
         const QRect widgetRect(screen.logicalGeometry.topLeft() - m_virtualGeometry.topLeft(),
                                screen.logicalGeometry.size());
         painter.drawImage(widgetRect, screen.image);
     }
 }
 
-void CaptureOverlay::paintAnnotations(QPainter &painter,
-                                      const QRect &widgetSelection,
-                                      bool includePreview) const
+void CaptureOverlay::paintCurrentSelectionChrome(QPainter& painter) const
 {
-    if (m_state != CaptureState::Editing || m_selectionImageRect.isEmpty()) {
+    const QRect selection = normalizedImageSelection();
+    if (selection.isEmpty()) {
         return;
     }
 
-    painter.save();
-    painter.setClipRect(widgetSelection);
-
-    // Widget coordinates ≡ logical image coordinates, so the widget
-    // selection rect has the same size as m_selectionImageRect.
-    // The scale factor is nominally 1.0 but we compute it explicitly
-    // to stay robust against any future coordinate change.
-    painter.translate(widgetSelection.topLeft());
-    const qreal sx = static_cast<qreal>(widgetSelection.width())
-                     / static_cast<qreal>(m_selectionImageRect.width());
-    const qreal sy = static_cast<qreal>(widgetSelection.height())
-                     / static_cast<qreal>(m_selectionImageRect.height());
-    painter.scale(sx, sy);
-
-    for (const std::unique_ptr<Annotation> &annotation : m_annotations) {
-        annotation->paint(painter);
-    }
-    if (includePreview && m_previewAnnotation != nullptr) {
-        m_previewAnnotation->paint(painter);
-    }
-
-    painter.restore();
+    paintSelectionChrome(painter, imageToWidgetRect(selection), selection);
 }
 
-void CaptureOverlay::paintSelectionChrome(QPainter &painter,
-                                          const QRect &widgetSelection,
-                                          const QRect &selection) const
+void CaptureOverlay::paintSelectionChrome(QPainter& painter,
+                                          const QRect& widgetSelection,
+                                          const QRect& selection) const
 {
     painter.save();
     painter.setPen(QPen(QColor(47, 128, 237), 2.0));
@@ -306,7 +280,7 @@ void CaptureOverlay::paintSelectionChrome(QPainter &painter,
         widgetSelection.bottomLeft(),
         QPoint(widgetSelection.left(), widgetSelection.center().y()),
     };
-    for (const QPoint &handle : handles) {
+    for (const QPoint& handle : handles) {
         painter.drawEllipse(handle, kHandleRadius, kHandleRadius);
     }
 
@@ -335,14 +309,8 @@ void CaptureOverlay::paintSelectionChrome(QPainter &painter,
     painter.restore();
 }
 
-// ---------------------------------------------------------------------------
-// Coordinate helpers
-// ---------------------------------------------------------------------------
-
-QPoint CaptureOverlay::widgetToImage(const QPointF &widgetPos) const
+QPoint CaptureOverlay::widgetToImage(const QPointF& widgetPos) const
 {
-    // The overlay widget occupies the exact virtual-desktop logical geometry,
-    // so widget coordinates equal logical image coordinates (identity).
     const QSize bounds = m_virtualGeometry.size();
     if (bounds.isEmpty()) {
         return {};
@@ -353,32 +321,31 @@ QPoint CaptureOverlay::widgetToImage(const QPointF &widgetPos) const
     return QPoint(x, y);
 }
 
-QPointF CaptureOverlay::widgetToSelection(const QPointF &widgetPos) const
+QPointF CaptureOverlay::widgetToSelection(const QPointF& widgetPos) const
 {
     const QPoint imagePoint = widgetToImage(widgetPos);
     return clampSelectionPoint(QPointF(imagePoint - m_selectionImageRect.topLeft()));
 }
 
-QRect CaptureOverlay::imageToWidgetRect(const QRect &imageRect) const
+QRect CaptureOverlay::imageToWidgetRect(const QRect& imageRect) const
 {
-    // Identity: widget coords ≡ logical image coords.
     return imageRect;
 }
 
-QRect CaptureOverlay::overlayToGlobalLogical(const QRect &localRect) const
+QRect CaptureOverlay::overlayToGlobalLogical(const QRect& localRect) const
 {
     return localRect.translated(m_virtualGeometry.topLeft());
 }
 
-QRect CaptureOverlay::globalToOverlayLogical(const QRect &globalRect) const
+QRect CaptureOverlay::globalToOverlayLogical(const QRect& globalRect) const
 {
     return globalRect.translated(-m_virtualGeometry.topLeft());
 }
 
-qreal CaptureOverlay::effectiveDevicePixelRatio(const QRect &globalLogicalRect) const
+qreal CaptureOverlay::effectiveDevicePixelRatio(const QRect& globalLogicalRect) const
 {
     qreal dpr = 1.0;
-    for (const CapturedScreen &screen : m_captureResult.screens()) {
+    for (const CapturedScreen& screen : m_captureResult.screens()) {
         if (screen.logicalGeometry.intersects(globalLogicalRect)) {
             dpr = qMax(dpr, screen.devicePixelRatio);
         }
@@ -401,7 +368,7 @@ QRect CaptureOverlay::normalizedImageSelection() const
         .intersected(QRect(QPoint(0, 0), bounds));
 }
 
-QRect CaptureOverlay::rectFromImagePoints(const QPoint &first, const QPoint &second) const
+QRect CaptureOverlay::rectFromImagePoints(const QPoint& first, const QPoint& second) const
 {
     const int left = qMin(first.x(), second.x());
     const int top = qMin(first.y(), second.y());
@@ -410,121 +377,533 @@ QRect CaptureOverlay::rectFromImagePoints(const QPoint &first, const QPoint &sec
     return QRect(left, top, right - left, bottom - top);
 }
 
-bool CaptureOverlay::imagePointInSelection(const QPoint &imagePoint) const
+bool CaptureOverlay::imagePointInSelection(const QPoint& imagePoint) const
 {
     return m_selectionImageRect.contains(imagePoint);
 }
 
-QPointF CaptureOverlay::clampSelectionPoint(const QPointF &point) const
+bool CaptureOverlay::isInsideSelection(const QPoint& pos) const
+{
+    return m_selectionImageRect.contains(pos);
+}
+
+SelectionHandle CaptureOverlay::hitTestSelectionHandle(const QPoint& pos) const
+{
+    if (m_selectionImageRect.isEmpty()) {
+        return SelectionHandle::None;
+    }
+
+    const QRect r = m_selectionImageRect;
+    const QList<QPair<SelectionHandle, QPoint>> handles = {
+        {SelectionHandle::TopLeft, r.topLeft()},
+        {SelectionHandle::Top, QPoint(r.center().x(), r.top())},
+        {SelectionHandle::TopRight, r.topRight()},
+        {SelectionHandle::Right, QPoint(r.right(), r.center().y())},
+        {SelectionHandle::BottomRight, r.bottomRight()},
+        {SelectionHandle::Bottom, QPoint(r.center().x(), r.bottom())},
+        {SelectionHandle::BottomLeft, r.bottomLeft()},
+        {SelectionHandle::Left, QPoint(r.left(), r.center().y())},
+    };
+
+    for (const auto& handle : handles) {
+        const QRect hitRect(handle.second - QPoint(kHandleHitRadius, kHandleHitRadius),
+                            QSize(kHandleHitRadius * 2 + 1, kHandleHitRadius * 2 + 1));
+        if (hitRect.contains(pos)) {
+            return handle.first;
+        }
+    }
+
+    return SelectionHandle::None;
+}
+
+void CaptureOverlay::updateSelectionCursor(const QPoint& pos)
+{
+    if (m_currentTool != CaptureTool::Select || m_state != CaptureState::Editing) {
+        setCursor(Qt::CrossCursor);
+        return;
+    }
+
+    const SelectionHandle handle = hitTestSelectionHandle(pos);
+    if (handle != SelectionHandle::None) {
+        setCursor(cursorForSelectionHandle(handle));
+    } else if (isInsideSelection(pos)) {
+        setCursor(Qt::SizeAllCursor);
+    } else {
+        setCursor(Qt::ArrowCursor);
+    }
+}
+
+QCursor CaptureOverlay::cursorForSelectionHandle(SelectionHandle handle) const
+{
+    switch (handle) {
+    case SelectionHandle::TopLeft:
+    case SelectionHandle::BottomRight:
+        return Qt::SizeFDiagCursor;
+    case SelectionHandle::TopRight:
+    case SelectionHandle::BottomLeft:
+        return Qt::SizeBDiagCursor;
+    case SelectionHandle::Top:
+    case SelectionHandle::Bottom:
+        return Qt::SizeVerCursor;
+    case SelectionHandle::Left:
+    case SelectionHandle::Right:
+        return Qt::SizeHorCursor;
+    case SelectionHandle::None:
+        return Qt::ArrowCursor;
+    }
+    return Qt::ArrowCursor;
+}
+
+QPointF CaptureOverlay::clampSelectionPoint(const QPointF& point) const
 {
     return QPointF(qBound<qreal>(0.0, point.x(), m_selectionImageRect.width()),
                    qBound<qreal>(0.0, point.y(), m_selectionImageRect.height()));
 }
 
-// ---------------------------------------------------------------------------
-// Annotation drawing
-// ---------------------------------------------------------------------------
-
-void CaptureOverlay::beginAnnotation(const QPointF &selectionPos)
+QRectF CaptureOverlay::selectionSceneRect() const
 {
+    return QRectF(QPointF(0, 0), QSizeF(m_selectionImageRect.size()));
+}
+
+QRect CaptureOverlay::boundedSelectionRect(const QRect& rect) const
+{
+    const QRect bounds(QPoint(0, 0), m_virtualGeometry.size());
+    const QRect bounded = rect.normalized().intersected(bounds);
+    if (bounded.width() < kMinimumSelectionSize || bounded.height() < kMinimumSelectionSize) {
+        return {};
+    }
+    return bounded;
+}
+
+void CaptureOverlay::beginMoveSelection(const QPoint& globalPos)
+{
+    commitActiveTextEditing();
+    clearAnnotationState();
+    m_selectionInteraction = SelectionInteraction::Moving;
+    m_initialSelectionRect = m_selectionImageRect;
+    m_pressGlobalPos = globalPos;
+    m_activeHandle = SelectionHandle::None;
+    setCursor(Qt::SizeAllCursor);
+}
+
+void CaptureOverlay::updateMoveSelection(const QPoint& globalPos)
+{
+    if (m_selectionInteraction != SelectionInteraction::Moving) {
+        return;
+    }
+
+    const QPoint delta = globalPos - m_pressGlobalPos;
+    const QRect bounds(QPoint(0, 0), m_virtualGeometry.size());
+    QPoint topLeft = m_initialSelectionRect.topLeft() + delta;
+    topLeft.setX(qBound(bounds.left(), topLeft.x(), bounds.right() - m_initialSelectionRect.width() + 1));
+    topLeft.setY(qBound(bounds.top(), topLeft.y(), bounds.bottom() - m_initialSelectionRect.height() + 1));
+    applySelectionRect(QRect(topLeft, m_initialSelectionRect.size()));
+}
+
+void CaptureOverlay::beginResizeSelection(SelectionHandle handle, const QPoint& globalPos)
+{
+    commitActiveTextEditing();
+    clearAnnotationState();
+    m_selectionInteraction = SelectionInteraction::Resizing;
+    m_initialSelectionRect = m_selectionImageRect;
+    m_pressGlobalPos = globalPos;
+    m_activeHandle = handle;
+    setCursor(cursorForSelectionHandle(handle));
+}
+
+void CaptureOverlay::updateResizeSelection(const QPoint& globalPos)
+{
+    if (m_selectionInteraction != SelectionInteraction::Resizing || m_activeHandle == SelectionHandle::None) {
+        return;
+    }
+
+    const QPoint delta = globalPos - m_pressGlobalPos;
+    const QRect bounds(QPoint(0, 0), m_virtualGeometry.size());
+    int left = m_initialSelectionRect.left();
+    int top = m_initialSelectionRect.top();
+    int right = m_initialSelectionRect.right() + 1;
+    int bottom = m_initialSelectionRect.bottom() + 1;
+
+    const bool adjustsLeft = m_activeHandle == SelectionHandle::TopLeft
+                             || m_activeHandle == SelectionHandle::BottomLeft
+                             || m_activeHandle == SelectionHandle::Left;
+    const bool adjustsRight = m_activeHandle == SelectionHandle::TopRight
+                              || m_activeHandle == SelectionHandle::Right
+                              || m_activeHandle == SelectionHandle::BottomRight;
+    const bool adjustsTop = m_activeHandle == SelectionHandle::TopLeft
+                            || m_activeHandle == SelectionHandle::Top
+                            || m_activeHandle == SelectionHandle::TopRight;
+    const bool adjustsBottom = m_activeHandle == SelectionHandle::BottomLeft
+                               || m_activeHandle == SelectionHandle::Bottom
+                               || m_activeHandle == SelectionHandle::BottomRight;
+
+    if (adjustsLeft) {
+        left = qBound(bounds.left(), left + delta.x(), right - kMinimumSelectionSize);
+    }
+    if (adjustsRight) {
+        right = qBound(left + kMinimumSelectionSize, right + delta.x(), bounds.right() + 1);
+    }
+    if (adjustsTop) {
+        top = qBound(bounds.top(), top + delta.y(), bottom - kMinimumSelectionSize);
+    }
+    if (adjustsBottom) {
+        bottom = qBound(top + kMinimumSelectionSize, bottom + delta.y(), bounds.bottom() + 1);
+    }
+
+    applySelectionRect(QRect(QPoint(left, top), QSize(right - left, bottom - top)));
+}
+
+void CaptureOverlay::finishSelectionInteraction()
+{
+    m_selectionInteraction = SelectionInteraction::None;
+    m_activeHandle = SelectionHandle::None;
+    m_initialSelectionRect = {};
+}
+
+void CaptureOverlay::resizeSelectionByWheel(int pixelDelta)
+{
+    if (pixelDelta == 0 || m_selectionImageRect.isEmpty()) {
+        return;
+    }
+
+    const QRect bounds(QPoint(0, 0), m_virtualGeometry.size());
+    int left = m_selectionImageRect.left();
+    int top = m_selectionImageRect.top();
+    int right = m_selectionImageRect.right() + 1;
+    int bottom = m_selectionImageRect.bottom() + 1;
+
+    if (pixelDelta > 0) {
+        left = qMax(bounds.left(), left - 1);
+        top = qMax(bounds.top(), top - 1);
+        right = qMin(bounds.right() + 1, right + 1);
+        bottom = qMin(bounds.bottom() + 1, bottom + 1);
+    } else {
+        if (right - left <= kMinimumSelectionSize || bottom - top <= kMinimumSelectionSize) {
+            return;
+        }
+        left = qMin(left + 1, right - kMinimumSelectionSize);
+        top = qMin(top + 1, bottom - kMinimumSelectionSize);
+        right = qMax(right - 1, left + kMinimumSelectionSize);
+        bottom = qMax(bottom - 1, top + kMinimumSelectionSize);
+    }
+
+    applySelectionRect(QRect(QPoint(left, top), QSize(right - left, bottom - top)));
+}
+
+bool CaptureOverlay::canAdjustSelectionAt(const QPoint& pos) const
+{
+    return hitTestSelectionHandle(pos) != SelectionHandle::None || isInsideSelection(pos);
+}
+
+void CaptureOverlay::applySelectionRect(const QRect& newRect)
+{
+    const QRect bounded = boundedSelectionRect(newRect);
+    if (bounded.isEmpty() || bounded == m_selectionImageRect) {
+        return;
+    }
+
+    const QRect oldRect = m_selectionImageRect;
+    const qreal dx = oldRect.left() - bounded.left();
+    const qreal dy = oldRect.top() - bounded.top();
+    if (!qFuzzyIsNull(dx) || !qFuzzyIsNull(dy)) {
+        shiftAllAnnotations(dx, dy);
+    }
+
+    m_selectionImageRect = bounded;
+    m_selectionStart = bounded.topLeft();
+    m_selectionEnd = bounded.bottomRight();
+    if (m_annotationScene != nullptr) {
+        m_annotationScene->setSceneRect(selectionSceneRect());
+    }
+    updateSelectionBackground();
+    updateAnnotationViewGeometry();
+    updateToolbarPosition();
+    update();
+    if (m_selectionChromeLayer != nullptr) {
+        m_selectionChromeLayer->update();
+    }
+}
+
+void CaptureOverlay::updateSelectionBackground()
+{
+    if (m_annotationScene == nullptr) {
+        return;
+    }
+
+    if (m_selectionPixmapItem == nullptr || m_selectionPixmapItem->scene() != m_annotationScene) {
+        m_selectionPixmapItem = m_annotationScene->addPixmap(selectionPixmap());
+        m_selectionPixmapItem->setZValue(-1000.0);
+    } else {
+        m_selectionPixmapItem->setPixmap(selectionPixmap());
+    }
+    m_selectionPixmapItem->setPos(0, 0);
+}
+
+void CaptureOverlay::updateAnnotationViewGeometry()
+{
+    syncAnnotationViewGeometry();
+}
+
+void CaptureOverlay::updateToolbarPosition()
+{
+    updateToolbarGeometry();
+}
+
+void CaptureOverlay::shiftAllAnnotations(qreal dx, qreal dy)
+{
+    if (m_annotationScene == nullptr) {
+        return;
+    }
+
+    for (QGraphicsItem* item : m_annotationScene->items()) {
+        if (item == nullptr || item == m_selectionPixmapItem || item == m_previewItem) {
+            continue;
+        }
+        item->moveBy(dx, dy);
+    }
+}
+
+void CaptureOverlay::setupAnnotationView()
+{
+    m_annotationScene = new QGraphicsScene(this);
+    m_annotationView = new QGraphicsView(m_annotationScene, this);
+    m_annotationView->setObjectName(QStringLiteral("AnnotationGraphicsView"));
+    m_annotationView->setFrameShape(QFrame::NoFrame);
+    m_annotationView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_annotationView->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_annotationView->setTransformationAnchor(QGraphicsView::NoAnchor);
+    m_annotationView->setResizeAnchor(QGraphicsView::NoAnchor);
+    m_annotationView->setDragMode(QGraphicsView::NoDrag);
+    m_annotationView->setViewportUpdateMode(QGraphicsView::FullViewportUpdate);
+    m_annotationView->setInteractive(true);
+    m_annotationView->setMouseTracking(true);
+    m_annotationView->setAutoFillBackground(false);
+    m_annotationView->setStyleSheet(QStringLiteral("background: transparent"));
+    m_annotationView->viewport()->setAutoFillBackground(false);
+    m_annotationView->viewport()->setAttribute(Qt::WA_TranslucentBackground, true);
+    m_annotationView->viewport()->installEventFilter(this);
+    m_annotationView->hide();
+}
+
+void CaptureOverlay::prepareAnnotationScene()
+{
+    m_undoStack.clear();
+    m_annotationScene->clear();
+    m_annotationScene->setSceneRect(selectionSceneRect());
+    m_selectionPixmapItem = m_annotationScene->addPixmap(selectionPixmap());
+    m_selectionPixmapItem->setPos(0, 0);
+    m_selectionPixmapItem->setZValue(-1000.0);
+    m_previewItem = nullptr;
+    m_activeTextItem = nullptr;
+}
+
+QPixmap CaptureOverlay::selectionPixmap() const
+{
+    const QRect selectionGlobal = overlayToGlobalLogical(m_selectionImageRect);
+    const qreal effectiveDpr = effectiveDevicePixelRatio(selectionGlobal);
+    const int physW = qRound(m_selectionImageRect.width() * effectiveDpr);
+    const int physH = qRound(m_selectionImageRect.height() * effectiveDpr);
+
+    QImage image(physW, physH, QImage::Format_ARGB32);
+    image.fill(Qt::transparent);
+
+    QPainter painter(&image);
+    painter.scale(effectiveDpr, effectiveDpr);
+
+    for (const CapturedScreen& screen : m_captureResult.screens()) {
+        const QRect overlapGlobal = selectionGlobal.intersected(screen.logicalGeometry);
+        if (overlapGlobal.isEmpty()) {
+            continue;
+        }
+
+        const QRect physicalSrc = m_captureResult.logicalToPhysical(screen, overlapGlobal);
+        if (physicalSrc.isEmpty()) {
+            continue;
+        }
+
+        const QRect overlapLocal = globalToOverlayLogical(overlapGlobal);
+        const QPointF targetTopLeft(overlapLocal.topLeft() - m_selectionImageRect.topLeft());
+        const QRectF targetRect(targetTopLeft, QSizeF(overlapLocal.size()));
+
+        QImage sourceImage = screen.image;
+        sourceImage.setDevicePixelRatio(1.0);
+        painter.drawImage(targetRect, sourceImage, physicalSrc);
+    }
+
+    painter.end();
+    image.setDevicePixelRatio(effectiveDpr);
+    return QPixmap::fromImage(image);
+}
+
+void CaptureOverlay::syncAnnotationViewGeometry()
+{
+    if (m_annotationView == nullptr || m_selectionImageRect.isEmpty()) {
+        return;
+    }
+
+    m_annotationView->resetTransform();
+    m_annotationView->setSceneRect(selectionSceneRect());
+    m_annotationView->setGeometry(imageToWidgetRect(m_selectionImageRect));
+    if (m_selectionChromeLayer != nullptr) {
+        m_selectionChromeLayer->setGeometry(rect());
+        if (m_state == CaptureState::Editing) {
+            m_selectionChromeLayer->show();
+            m_selectionChromeLayer->raise();
+        }
+    }
+}
+
+void CaptureOverlay::beginAnnotation(const QPointF& selectionPos)
+{
+    commitActiveTextEditing();
     clearAnnotationState();
     m_drawingAnnotation = true;
     m_annotationStart = clampSelectionPoint(selectionPos);
 
     switch (m_currentTool) {
     case CaptureTool::Rect:
-        m_previewAnnotation = std::make_unique<RectAnnotation>(QRectF(m_annotationStart, m_annotationStart),
-                                                               m_annotationPen);
+        m_previewItem = new RectAnnotationItem(QRectF(m_annotationStart, m_annotationStart), m_annotationPen);
         break;
     case CaptureTool::Arrow:
-        m_previewAnnotation = std::make_unique<ArrowAnnotation>(QLineF(m_annotationStart, m_annotationStart),
-                                                                m_annotationPen);
+        m_previewItem = new ArrowAnnotationItem(QLineF(m_annotationStart, m_annotationStart), m_annotationPen);
         break;
     case CaptureTool::Pen:
         m_activePath = QPainterPath(m_annotationStart);
         m_penPointCount = 1;
-        m_previewAnnotation = std::make_unique<PenAnnotation>(m_activePath, m_annotationPen);
+        m_previewItem = new PenAnnotationItem(m_activePath, m_annotationPen);
         break;
+    case CaptureTool::Select:
     case CaptureTool::None:
     case CaptureTool::Text:
         m_drawingAnnotation = false;
         break;
     }
+
+    if (m_previewItem != nullptr) {
+        m_annotationScene->addItem(m_previewItem);
+    }
 }
 
-void CaptureOverlay::updateAnnotation(const QPointF &selectionPos)
+void CaptureOverlay::updateAnnotation(const QPointF& selectionPos)
 {
-    if (!m_drawingAnnotation) {
+    if (!m_drawingAnnotation || m_annotationScene == nullptr) {
         return;
+    }
+
+    if (m_previewItem != nullptr) {
+        m_annotationScene->removeItem(m_previewItem);
+        delete m_previewItem;
+        m_previewItem = nullptr;
     }
 
     const QPointF current = clampSelectionPoint(selectionPos);
     switch (m_currentTool) {
     case CaptureTool::Rect:
-        m_previewAnnotation = std::make_unique<RectAnnotation>(QRectF(m_annotationStart, current),
-                                                               m_annotationPen);
+        m_previewItem = new RectAnnotationItem(QRectF(m_annotationStart, current), m_annotationPen);
         break;
     case CaptureTool::Arrow:
-        m_previewAnnotation = std::make_unique<ArrowAnnotation>(QLineF(m_annotationStart, current),
-                                                                m_annotationPen);
+        m_previewItem = new ArrowAnnotationItem(QLineF(m_annotationStart, current), m_annotationPen);
         break;
     case CaptureTool::Pen:
         m_activePath.lineTo(current);
         ++m_penPointCount;
-        m_previewAnnotation = std::make_unique<PenAnnotation>(m_activePath, m_annotationPen);
+        m_previewItem = new PenAnnotationItem(m_activePath, m_annotationPen);
         break;
+    case CaptureTool::Select:
     case CaptureTool::None:
     case CaptureTool::Text:
         break;
     }
+
+    if (m_previewItem != nullptr) {
+        m_annotationScene->addItem(m_previewItem);
+    }
 }
 
-void CaptureOverlay::finishAnnotation(const QPointF &selectionPos)
+void CaptureOverlay::finishAnnotation(const QPointF& selectionPos)
 {
     updateAnnotation(selectionPos);
     m_drawingAnnotation = false;
 
-    if (m_previewAnnotation != nullptr && previewIsLargeEnough()) {
-        addAnnotation(std::move(m_previewAnnotation));
+    const bool valid = previewIsLargeEnough();
+    QGraphicsItem* finishedItem = m_previewItem;
+    m_previewItem = nullptr;
+
+    if (finishedItem != nullptr && valid) {
+        m_annotationScene->removeItem(finishedItem);
+        addAnnotationItem(finishedItem);
+    } else {
+        delete finishedItem;
     }
 
     clearAnnotationState();
-    update();
 }
 
-void CaptureOverlay::createTextAnnotation(const QPointF &selectionPos)
+void CaptureOverlay::createTextAnnotation(const QPointF& selectionPos)
 {
-    bool accepted = false;
-    const QString text = QInputDialog::getText(this,
-                                               QStringLiteral("Text"),
-                                               QStringLiteral("Text:"),
-                                               QLineEdit::Normal,
-                                               QString(),
-                                               &accepted)
-                             .trimmed();
-    if (!accepted || text.isEmpty()) {
+    commitActiveTextEditing();
+
+    auto* item = new TextAnnotationItem(clampSelectionPoint(selectionPos),
+                                       m_annotationPen.color());
+    const qreal remainingWidth = qMax<qreal>(1.0, m_selectionImageRect.width() - item->pos().x());
+    item->setMaximumTextWidth(remainingWidth);
+    item->setFinishedHandler([this](TextAnnotationItem* textItem, TextAnnotationItem::FinishAction action) {
+        if (textItem == m_activeTextItem) {
+            finishActiveTextEditing(action);
+        }
+    });
+
+    m_activeTextItem = item;
+    m_annotationScene->addItem(item);
+    item->setFocus(Qt::MouseFocusReason);
+}
+
+void CaptureOverlay::finishActiveTextEditing(TextAnnotationItem::FinishAction action)
+{
+    if (m_activeTextItem == nullptr) {
         return;
     }
 
-    addAnnotation(std::make_unique<TextAnnotation>(clampSelectionPoint(selectionPos),
-                                                  text,
-                                                  m_annotationPen.color()));
+    TextAnnotationItem* item = m_activeTextItem;
+    m_activeTextItem = nullptr;
+    item->setFinishedHandler({});
+
+    const bool empty = item->toPlainText().trimmed().isEmpty();
+    if (action == TextAnnotationItem::FinishAction::Cancel || empty) {
+        if (item->scene() != nullptr) {
+            item->scene()->removeItem(item);
+        }
+        delete item;
+        return;
+    }
+
+    item->setTextInteractionFlags(Qt::NoTextInteraction);
+    item->clearFocus();
+    if (item->scene() != nullptr) {
+        item->scene()->removeItem(item);
+    }
+    addAnnotationItem(item);
+}
+
+void CaptureOverlay::commitActiveTextEditing()
+{
+    finishActiveTextEditing(TextAnnotationItem::FinishAction::Commit);
 }
 
 bool CaptureOverlay::previewIsLargeEnough() const
 {
-    if (m_previewAnnotation == nullptr) {
+    if (m_previewItem == nullptr) {
         return false;
     }
 
-    if (const auto *rect = dynamic_cast<const RectAnnotation *>(m_previewAnnotation.get())) {
-        return rect->rect().width() >= kMinimumSelectionSize
-               && rect->rect().height() >= kMinimumSelectionSize;
+    if (const auto* rect = dynamic_cast<const RectAnnotationItem*>(m_previewItem)) {
+        const QRectF r = rect->rect();
+        return r.width() >= kMinimumSelectionSize && r.height() >= kMinimumSelectionSize;
     }
-    if (const auto *arrow = dynamic_cast<const ArrowAnnotation *>(m_previewAnnotation.get())) {
+    if (const auto* arrow = dynamic_cast<const ArrowAnnotationItem*>(m_previewItem)) {
         return arrow->line().length() >= kMinimumArrowLength;
     }
-    if (const auto *pen = dynamic_cast<const PenAnnotation *>(m_previewAnnotation.get())) {
+    if (const auto* pen = dynamic_cast<const PenAnnotationItem*>(m_previewItem)) {
         const QRectF bounds = pen->path().controlPointRect();
         return m_penPointCount >= 2
                && (bounds.width() >= kMinimumSelectionSize || bounds.height() >= kMinimumSelectionSize);
@@ -535,7 +914,13 @@ bool CaptureOverlay::previewIsLargeEnough() const
 
 void CaptureOverlay::clearAnnotationState()
 {
-    m_previewAnnotation.reset();
+    if (m_previewItem != nullptr) {
+        if (m_previewItem->scene() != nullptr) {
+            m_previewItem->scene()->removeItem(m_previewItem);
+        }
+        delete m_previewItem;
+        m_previewItem = nullptr;
+    }
     m_activePath = QPainterPath();
     m_penPointCount = 0;
     m_drawingAnnotation = false;
@@ -543,24 +928,40 @@ void CaptureOverlay::clearAnnotationState()
 
 void CaptureOverlay::clearAnnotationsAndHistory()
 {
+    if (m_activeTextItem != nullptr) {
+        if (m_activeTextItem->scene() != nullptr) {
+            m_activeTextItem->scene()->removeItem(m_activeTextItem);
+        }
+        delete m_activeTextItem;
+        m_activeTextItem = nullptr;
+    }
     clearAnnotationState();
     m_undoStack.clear();
-    m_annotations.clear();
+    if (m_annotationScene != nullptr) {
+        m_annotationScene->clear();
+    }
+    m_selectionPixmapItem = nullptr;
+    if (m_annotationView != nullptr) {
+        m_annotationView->hide();
+    }
+    if (m_selectionChromeLayer != nullptr) {
+        m_selectionChromeLayer->hide();
+    }
     m_toolbar->setUndoAvailable(false);
     m_toolbar->setRedoAvailable(false);
 }
 
-// ---------------------------------------------------------------------------
-// Events
-// ---------------------------------------------------------------------------
-
-void CaptureOverlay::resizeEvent(QResizeEvent *event)
+void CaptureOverlay::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
+    if (m_selectionChromeLayer != nullptr) {
+        m_selectionChromeLayer->setGeometry(rect());
+    }
+    syncAnnotationViewGeometry();
     updateToolbarGeometry();
 }
 
-void CaptureOverlay::mousePressEvent(QMouseEvent *event)
+void CaptureOverlay::mousePressEvent(QMouseEvent* event)
 {
     if (event->button() == Qt::RightButton) {
         cancelAndClose();
@@ -577,24 +978,29 @@ void CaptureOverlay::mousePressEvent(QMouseEvent *event)
         m_selectionEnd = imagePoint;
         m_selecting = true;
         m_hasSelection = true;
+        if (m_annotationView != nullptr) {
+            m_annotationView->hide();
+        }
+        if (m_selectionChromeLayer != nullptr) {
+            m_selectionChromeLayer->hide();
+        }
         update();
         return;
     }
 
-    if (m_state != CaptureState::Editing || !imagePointInSelection(imagePoint)) {
-        return;
+    if (m_state == CaptureState::Editing && m_currentTool == CaptureTool::Select) {
+        const SelectionHandle handle = hitTestSelectionHandle(imagePoint);
+        if (handle != SelectionHandle::None) {
+            beginResizeSelection(handle, imagePoint);
+            return;
+        }
+        if (isInsideSelection(imagePoint)) {
+            beginMoveSelection(imagePoint);
+        }
     }
-
-    const QPointF selectionPos = widgetToSelection(event->position());
-    if (m_currentTool == CaptureTool::Text) {
-        createTextAnnotation(selectionPos);
-        return;
-    }
-
-    beginAnnotation(selectionPos);
 }
 
-void CaptureOverlay::mouseMoveEvent(QMouseEvent *event)
+void CaptureOverlay::mouseMoveEvent(QMouseEvent* event)
 {
     if (m_state == CaptureState::Selecting && m_selecting) {
         m_selectionEnd = widgetToImage(event->position());
@@ -602,13 +1008,21 @@ void CaptureOverlay::mouseMoveEvent(QMouseEvent *event)
         return;
     }
 
-    if (m_state == CaptureState::Editing && m_drawingAnnotation) {
-        updateAnnotation(widgetToSelection(event->position()));
-        update();
+    if (m_state == CaptureState::Editing && m_currentTool == CaptureTool::Select) {
+        const QPoint imagePoint = widgetToImage(event->position());
+        if (m_selectionInteraction == SelectionInteraction::Moving) {
+            updateMoveSelection(imagePoint);
+            return;
+        }
+        if (m_selectionInteraction == SelectionInteraction::Resizing) {
+            updateResizeSelection(imagePoint);
+            return;
+        }
+        updateSelectionCursor(imagePoint);
     }
 }
 
-void CaptureOverlay::mouseReleaseEvent(QMouseEvent *event)
+void CaptureOverlay::mouseReleaseEvent(QMouseEvent* event)
 {
     if (event->button() != Qt::LeftButton) {
         return;
@@ -629,14 +1043,20 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent *event)
         return;
     }
 
-    if (m_state == CaptureState::Editing && m_drawingAnnotation) {
-        finishAnnotation(widgetToSelection(event->position()));
+    if (m_state == CaptureState::Editing && m_currentTool == CaptureTool::Select) {
+        finishSelectionInteraction();
     }
 }
 
-void CaptureOverlay::keyPressEvent(QKeyEvent *event)
+void CaptureOverlay::keyPressEvent(QKeyEvent* event)
 {
     if (event->key() == Qt::Key_Escape) {
+        if (m_activeTextItem != nullptr) {
+            finishActiveTextEditing(m_activeTextItem->toPlainText().trimmed().isEmpty()
+                                        ? TextAnnotationItem::FinishAction::Cancel
+                                        : TextAnnotationItem::FinishAction::Commit);
+            return;
+        }
         cancelAndClose();
         return;
     }
@@ -655,9 +1075,105 @@ void CaptureOverlay::keyPressEvent(QKeyEvent *event)
     QWidget::keyPressEvent(event);
 }
 
-// ---------------------------------------------------------------------------
-// Toolbar
-// ---------------------------------------------------------------------------
+bool CaptureOverlay::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched != m_annotationView->viewport() || m_state != CaptureState::Editing) {
+        return QWidget::eventFilter(watched, event);
+    }
+
+    if (event->type() == QEvent::MouseButtonPress) {
+        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        if (mouseEvent->button() == Qt::RightButton) {
+            cancelAndClose();
+            return true;
+        }
+        if (mouseEvent->button() != Qt::LeftButton) {
+            return true;
+        }
+
+        if (m_activeTextItem != nullptr && m_currentTool == CaptureTool::Select) {
+            QGraphicsItem* hitItem = m_annotationView->itemAt(mouseEvent->pos());
+            if (hitItem == m_activeTextItem) {
+                return QWidget::eventFilter(watched, event);
+            }
+            commitActiveTextEditing();
+        } else if (m_activeTextItem != nullptr) {
+            QGraphicsItem* hitItem = m_annotationView->itemAt(mouseEvent->pos());
+            if (hitItem == m_activeTextItem) {
+                return QWidget::eventFilter(watched, event);
+            }
+            commitActiveTextEditing();
+            return true;
+        }
+
+        if (m_currentTool == CaptureTool::Select) {
+            const QPoint overlayPos = m_annotationView->viewport()->mapTo(this, mouseEvent->pos());
+            const SelectionHandle handle = hitTestSelectionHandle(overlayPos);
+            if (handle != SelectionHandle::None) {
+                beginResizeSelection(handle, overlayPos);
+            } else if (isInsideSelection(overlayPos)) {
+                beginMoveSelection(overlayPos);
+            }
+            return true;
+        }
+
+        const QPointF selectionPos = clampSelectionPoint(mouseEvent->position());
+        if (m_currentTool == CaptureTool::Text) {
+            createTextAnnotation(selectionPos);
+        } else {
+            beginAnnotation(selectionPos);
+        }
+        return true;
+    }
+
+    if (event->type() == QEvent::MouseMove) {
+        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        if (m_currentTool == CaptureTool::Select) {
+            const QPoint overlayPos = m_annotationView->viewport()->mapTo(this, mouseEvent->pos());
+            if (m_selectionInteraction == SelectionInteraction::Moving) {
+                updateMoveSelection(overlayPos);
+                return true;
+            }
+            if (m_selectionInteraction == SelectionInteraction::Resizing) {
+                updateResizeSelection(overlayPos);
+                return true;
+            }
+            updateSelectionCursor(overlayPos);
+            return true;
+        }
+        if (m_drawingAnnotation) {
+            updateAnnotation(mouseEvent->position());
+            return true;
+        }
+    }
+
+    if (event->type() == QEvent::MouseButtonRelease) {
+        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        if (mouseEvent->button() == Qt::LeftButton && m_currentTool == CaptureTool::Select) {
+            finishSelectionInteraction();
+            return true;
+        }
+        if (mouseEvent->button() == Qt::LeftButton && m_drawingAnnotation) {
+            finishAnnotation(mouseEvent->position());
+            return true;
+        }
+    }
+
+    if (event->type() == QEvent::Wheel && m_currentTool == CaptureTool::Select) {
+        auto* wheelEvent = static_cast<QWheelEvent*>(event);
+        const QPoint overlayPos = m_annotationView->viewport()->mapTo(this, wheelEvent->position().toPoint());
+        if (canAdjustSelectionAt(overlayPos)) {
+            if (wheelEvent->angleDelta().y() > 0) {
+                resizeSelectionByWheel(1);
+            } else if (wheelEvent->angleDelta().y() < 0) {
+                resizeSelectionByWheel(-1);
+            }
+            return true;
+        }
+    }
+
+    return QWidget::eventFilter(watched, event);
+}
 
 void CaptureOverlay::updateToolbarGeometry()
 {
@@ -683,20 +1199,21 @@ void CaptureOverlay::updateToolbarGeometry()
 
     m_toolbar->setGeometry(QRect(QPoint(x, y), toolbarSize));
     m_toolbar->show();
+    if (m_selectionChromeLayer != nullptr) {
+        m_selectionChromeLayer->raise();
+    }
     m_toolbar->raise();
 }
 
 void CaptureOverlay::setCurrentTool(CaptureTool tool)
 {
+    commitActiveTextEditing();
+    clearAnnotationState();
+    finishSelectionInteraction();
     m_currentTool = tool;
     m_toolbar->setCurrentTool(tool);
-    clearAnnotationState();
-    update();
+    setCursor(tool == CaptureTool::Select ? Qt::ArrowCursor : Qt::CrossCursor);
 }
-
-// ---------------------------------------------------------------------------
-// Actions
-// ---------------------------------------------------------------------------
 
 void CaptureOverlay::copyAndClose()
 {
@@ -753,9 +1270,19 @@ void CaptureOverlay::reselect()
     update();
 }
 
-void CaptureOverlay::showPinPlaceholder()
+void CaptureOverlay::pinAndClose()
 {
-    QMessageBox::information(this,
-                             QStringLiteral("Pin"),
-                             QStringLiteral("Pinning will be added in a later version."));
+    const QImage result = renderResultImage();
+    if (result.isNull()) {
+        QMessageBox::critical(this,
+                              QStringLiteral("Pin Failed"),
+                              QStringLiteral("Could not create a pin from the current selection."));
+        return;
+    }
+
+    auto* pinWindow = new PinWindow(result);
+    pinWindow->show();
+
+    m_state = CaptureState::Finished;
+    close();
 }

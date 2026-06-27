@@ -1,6 +1,11 @@
 #include "CaptureAnnotation.h"
 
+#include <QFocusEvent>
+#include <QKeyEvent>
 #include <QPainter>
+#include <QStyleOptionGraphicsItem>
+#include <QTextDocument>
+#include <QTextOption>
 #include <QtMath>
 
 namespace
@@ -13,60 +18,49 @@ QPen drawingPen(QPen pen)
 }
 }
 
-RectAnnotation::RectAnnotation(const QRectF& rect, const QPen& pen)
-    : m_rect(rect.normalized())
-    , m_pen(drawingPen(pen))
+RectAnnotationItem::RectAnnotationItem(const QRectF& rect, const QPen& pen)
+    : QGraphicsRectItem(rect.normalized())
 {
+    setPen(drawingPen(pen));
+    setBrush(Qt::NoBrush);
+    setFlag(QGraphicsItem::ItemIsSelectable, true);
 }
 
-QRectF RectAnnotation::rect() const
-{
-    return m_rect;
-}
-
-void RectAnnotation::paint(QPainter& painter) const
-{
-    painter.save();
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setPen(m_pen);
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRect(m_rect);
-    painter.restore();
-}
-
-std::unique_ptr<Annotation> RectAnnotation::clone() const
-{
-    return std::make_unique<RectAnnotation>(m_rect, m_pen);
-}
-
-ArrowAnnotation::ArrowAnnotation(const QLineF& line, const QPen& pen)
+ArrowAnnotationItem::ArrowAnnotationItem(const QLineF& line, const QPen& pen)
     : m_line(line)
     , m_pen(drawingPen(pen))
 {
+    setFlag(QGraphicsItem::ItemIsSelectable, true);
 }
 
-QLineF ArrowAnnotation::line() const
+QLineF ArrowAnnotationItem::line() const
 {
     return m_line;
 }
 
-void ArrowAnnotation::paint(QPainter& painter) const
+QRectF ArrowAnnotationItem::boundingRect() const
 {
-    painter.save();
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setPen(m_pen);
-    painter.setBrush(m_pen.color());
-    painter.drawLine(m_line);
-    painter.drawPolygon(arrowHead());
-    painter.restore();
+    const qreal margin = qMax<qreal>(12.0, m_pen.widthF() * 5.0);
+    return QRectF(m_line.p1(), m_line.p2()).normalized().adjusted(-margin, -margin, margin, margin);
 }
 
-std::unique_ptr<Annotation> ArrowAnnotation::clone() const
+void ArrowAnnotationItem::paint(QPainter* painter,
+                                const QStyleOptionGraphicsItem* option,
+                                QWidget* widget)
 {
-    return std::make_unique<ArrowAnnotation>(m_line, m_pen);
+    Q_UNUSED(option)
+    Q_UNUSED(widget)
+
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(m_pen);
+    painter->setBrush(m_pen.color());
+    painter->drawLine(m_line);
+    painter->drawPolygon(arrowHead());
+    painter->restore();
 }
 
-QPolygonF ArrowAnnotation::arrowHead() const
+QPolygonF ArrowAnnotationItem::arrowHead() const
 {
     if (m_line.length() <= 0.0) {
         return {};
@@ -82,64 +76,115 @@ QPolygonF ArrowAnnotation::arrowHead() const
     return QPolygonF({end, p1, p2});
 }
 
-PenAnnotation::PenAnnotation(const QPainterPath& path, const QPen& pen)
-    : m_path(path)
-    , m_pen(drawingPen(pen))
+PenAnnotationItem::PenAnnotationItem(const QPainterPath& path, const QPen& pen)
+    : QGraphicsPathItem(path)
 {
+    setPen(drawingPen(pen));
+    setBrush(Qt::NoBrush);
+    setFlag(QGraphicsItem::ItemIsSelectable, true);
 }
 
-QPainterPath PenAnnotation::path() const
+TextAnnotationItem::TextAnnotationItem(const QPointF& position,
+                                       const QColor& color,
+                                       const QFont& font,
+                                       QGraphicsItem* parent)
+    : QGraphicsTextItem(parent)
 {
-    return m_path;
+    setPos(position);
+    setTextInteractionFlags(Qt::TextEditorInteraction);
+    setFlag(QGraphicsItem::ItemIsFocusable, true);
+    setFlag(QGraphicsItem::ItemIsSelectable, true);
+    setDefaultTextColor(color);
+    setFont(font);
+
+    QTextOption option = document()->defaultTextOption();
+    option.setWrapMode(QTextOption::WrapAnywhere);
+    document()->setDefaultTextOption(option);
+
+    connect(document(), &QTextDocument::contentsChanged,
+            this, &TextAnnotationItem::updateTextWidthConstraint);
 }
 
-void PenAnnotation::paint(QPainter& painter) const
+void TextAnnotationItem::setFinishedHandler(std::function<void(TextAnnotationItem*, FinishAction)> handler)
 {
-    painter.save();
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setPen(m_pen);
-    painter.setBrush(Qt::NoBrush);
-    painter.drawPath(m_path);
-    painter.restore();
+    m_finishedHandler = std::move(handler);
 }
 
-std::unique_ptr<Annotation> PenAnnotation::clone() const
+void TextAnnotationItem::setMaximumTextWidth(qreal width)
 {
-    return std::make_unique<PenAnnotation>(m_path, m_pen);
+    m_maximumTextWidth = width;
+    updateTextWidthConstraint();
 }
 
-TextAnnotation::TextAnnotation(const QPointF& position,
-                               const QString& text,
-                               const QColor& color,
-                               const QFont& font)
-    : m_position(position)
-    , m_text(text)
-    , m_color(color)
-    , m_font(font)
+void TextAnnotationItem::finishEditing(FinishAction action)
 {
+    if (m_finishing) {
+        return;
+    }
+
+    m_finishing = true;
+    if (m_finishedHandler) {
+        m_finishedHandler(this, action);
+    }
+    m_finishing = false;
 }
 
-QPointF TextAnnotation::position() const
+void TextAnnotationItem::commitEditing()
 {
-    return m_position;
+    finishEditing(FinishAction::Commit);
 }
 
-QString TextAnnotation::text() const
+void TextAnnotationItem::cancelEditing()
 {
-    return m_text;
+    finishEditing(FinishAction::Cancel);
 }
 
-void TextAnnotation::paint(QPainter& painter) const
+void TextAnnotationItem::focusOutEvent(QFocusEvent* event)
 {
-    painter.save();
-    painter.setRenderHint(QPainter::TextAntialiasing, true);
-    painter.setFont(m_font);
-    painter.setPen(m_color);
-    painter.drawText(m_position, m_text);
-    painter.restore();
+    QGraphicsTextItem::focusOutEvent(event);
+    finishEditing(FinishAction::Commit);
 }
 
-std::unique_ptr<Annotation> TextAnnotation::clone() const
+void TextAnnotationItem::keyPressEvent(QKeyEvent* event)
 {
-    return std::make_unique<TextAnnotation>(m_position, m_text, m_color, m_font);
+    const bool control = event->modifiers().testFlag(Qt::ControlModifier);
+    if (control && (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)) {
+        event->accept();
+        finishEditing(FinishAction::Commit);
+        return;
+    }
+
+    if (event->key() == Qt::Key_Escape) {
+        event->accept();
+        const FinishAction action = toPlainText().trimmed().isEmpty()
+                                        ? FinishAction::Cancel
+                                        : FinishAction::Commit;
+        finishEditing(action);
+        return;
+    }
+
+    QGraphicsTextItem::keyPressEvent(event);
+}
+
+void TextAnnotationItem::updateTextWidthConstraint()
+{
+    if (m_updatingTextWidth) {
+        return;
+    }
+
+    m_updatingTextWidth = true;
+
+    if (m_maximumTextWidth <= 0.0 || toPlainText().isEmpty()) {
+        setTextWidth(-1.0);
+        m_updatingTextWidth = false;
+        return;
+    }
+
+    setTextWidth(-1.0);
+    const qreal naturalWidth = document()->idealWidth();
+    if (naturalWidth > m_maximumTextWidth) {
+        setTextWidth(m_maximumTextWidth);
+    }
+
+    m_updatingTextWidth = false;
 }

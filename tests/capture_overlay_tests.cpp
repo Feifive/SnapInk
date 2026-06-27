@@ -1,9 +1,21 @@
 #include "../src/core/capture/CapturedScreen.h"
 #include "../src/ui/capture/CaptureAnnotation.h"
 #include "../src/ui/capture/CaptureOverlay.h"
+#include "../src/ui/pin/PinWindow.h"
 
 #include <QImage>
+#include <QApplication>
+#include <QGraphicsPixmapItem>
+#include <QGraphicsScene>
+#include <QGraphicsView>
+#include <QPointer>
+#include <QScreen>
 #include <QTest>
+#include <QTextDocument>
+#include <QTextOption>
+#include <QToolButton>
+#include <QWheelEvent>
+#include <QtMath>
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -34,6 +46,34 @@ CaptureResult makeSingleScreenResult(int logicalW, int logicalH, qreal dpr = 1.0
     return CaptureResult({makeTestScreen(logicalW, logicalH, dpr)});
 }
 
+QToolButton* findToolButton(CaptureOverlay& overlay, const QString& text)
+{
+    for (QToolButton* button : overlay.findChildren<QToolButton*>()) {
+        if (button->text() == text) {
+            return button;
+        }
+    }
+    return nullptr;
+}
+
+void clickTool(CaptureOverlay& overlay, const QString& text)
+{
+    QToolButton* button = findToolButton(overlay, text);
+    QVERIFY(button != nullptr);
+    QTest::mouseClick(button, Qt::LeftButton);
+}
+
+QList<PinWindow*> pinWindows()
+{
+    QList<PinWindow*> windows;
+    for (QWidget* widget : QApplication::topLevelWidgets()) {
+        if (auto* pinWindow = qobject_cast<PinWindow*>(widget)) {
+            windows.append(pinWindow);
+        }
+    }
+    return windows;
+}
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -45,11 +85,23 @@ class CaptureOverlayTests : public QObject
     Q_OBJECT
 
 private slots:
-    // Existing tests (updated for new constructor)
     void overlayStartsInSelectingState();
     void overlayEditingRenderUsesSelectionSize();
     void overlayAnnotationsUseSelectionRelativeCoordinates();
     void overlayUndoRedoUpdatesRenderedResult();
+    void editingEmbedsGraphicsViewMatchingSelection();
+    void drawnAnnotationRemainsAfterMouseRelease();
+    void textEditorWidthDoesNotStretchToSelectionRightEdge();
+    void textAnnotationWrapsAnywhereInsideMaximumWidth();
+    void editingDefaultsToSelectTool();
+    void selectToolMovesSelectionAndPreservesUndoHistory();
+    void resizingFromTopLeftShiftsAnnotationsToKeepGlobalPosition();
+    void resizingFromBottomRightKeepsAnnotationLocalPosition();
+    void selectToolWheelResizesByOnePixel();
+    void annotationToolDoesNotMoveSelection();
+    void pinWindowUsesToolTopmostFramelessFlagsAndDeletesOnClose();
+    void pinWindowScalesInitialGeometryToAvailableScreen();
+    void pinToolbarCreatesIndependentPinWindowAndClosesOverlay();
 
     // New DPR-aware tests
     void singleScreenExportAtDpr1_0IsLossless();
@@ -66,9 +118,6 @@ private slots:
 };
 
 // ---------------------------------------------------------------------------
-// Existing tests (updated)
-// ---------------------------------------------------------------------------
-
 void CaptureOverlayTests::overlayStartsInSelectingState()
 {
     CaptureResult cr = makeSingleScreenResult(80, 60);
@@ -97,8 +146,8 @@ void CaptureOverlayTests::overlayAnnotationsUseSelectionRelativeCoordinates()
     CaptureOverlay overlay(std::move(cr), QRect(0, 0, 80, 60));
     overlay.enterEditing(QRect(20, 10, 30, 20));
 
-    overlay.addAnnotation(std::make_unique<RectAnnotation>(QRectF(0.0, 0.0, 12.0, 8.0),
-                                                           QPen(Qt::red, 3.0)));
+    overlay.addAnnotationItem(new RectAnnotationItem(QRectF(0.0, 0.0, 12.0, 8.0),
+                                                     QPen(Qt::red, 3.0)));
     const QImage result = overlay.renderResultImage();
 
     QCOMPARE(result.pixelColor(1, 1), QColor(Qt::red));
@@ -111,8 +160,8 @@ void CaptureOverlayTests::overlayUndoRedoUpdatesRenderedResult()
     CaptureOverlay overlay(std::move(cr), QRect(0, 0, 80, 60));
     overlay.enterEditing(QRect(0, 0, 30, 20));
 
-    overlay.addAnnotation(std::make_unique<RectAnnotation>(QRectF(0.0, 0.0, 12.0, 8.0),
-                                                           QPen(Qt::red, 3.0)));
+    overlay.addAnnotationItem(new RectAnnotationItem(QRectF(0.0, 0.0, 12.0, 8.0),
+                                                     QPen(Qt::red, 3.0)));
     QVERIFY(overlay.canUndo());
 
     overlay.undo();
@@ -122,6 +171,274 @@ void CaptureOverlayTests::overlayUndoRedoUpdatesRenderedResult()
 
     overlay.redo();
     QCOMPARE(overlay.renderResultImage().pixelColor(1, 1), QColor(Qt::red));
+}
+
+void CaptureOverlayTests::editingEmbedsGraphicsViewMatchingSelection()
+{
+    CaptureResult cr = makeSingleScreenResult(80, 60);
+    CaptureOverlay overlay(std::move(cr), QRect(0, 0, 80, 60));
+
+    QVERIFY(overlay.findChild<QGraphicsView *>() == nullptr
+            || overlay.findChild<QGraphicsView *>()->isHidden());
+
+    overlay.enterEditing(QRect(20, 10, 30, 20));
+
+    auto *view = overlay.findChild<QGraphicsView *>();
+    QVERIFY(view != nullptr);
+    QCOMPARE(view->geometry(), QRect(20, 10, 30, 20));
+    QCOMPARE(view->sceneRect(), QRectF(0, 0, 30, 20));
+    QCOMPARE(view->horizontalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
+    QCOMPARE(view->verticalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
+    QVERIFY(view->autoFillBackground() == false);
+    QVERIFY(view->scene() != nullptr);
+    QCOMPARE(view->scene()->items(Qt::AscendingOrder).size(), 1);
+    QVERIFY(qgraphicsitem_cast<QGraphicsPixmapItem *>(view->scene()->items(Qt::AscendingOrder).first())
+            != nullptr);
+}
+
+void CaptureOverlayTests::drawnAnnotationRemainsAfterMouseRelease()
+{
+    CaptureResult cr = makeSingleScreenResult(80, 60);
+    CaptureOverlay overlay(std::move(cr), QRect(0, 0, 80, 60));
+    overlay.enterEditing(QRect(20, 10, 30, 20));
+
+    auto *view = overlay.findChild<QGraphicsView *>(QStringLiteral("AnnotationGraphicsView"));
+    QVERIFY(view != nullptr);
+
+    clickTool(overlay, QStringLiteral("Rect"));
+    QTest::mousePress(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(1, 1));
+    QTest::mouseMove(view->viewport(), QPoint(12, 8));
+    QTest::mouseRelease(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(12, 8));
+
+    QVERIFY(overlay.canUndo());
+    QCOMPARE(overlay.renderResultImage().pixelColor(1, 1), QColor(Qt::red));
+}
+
+void CaptureOverlayTests::textEditorWidthDoesNotStretchToSelectionRightEdge()
+{
+    CaptureResult cr = makeSingleScreenResult(400, 120);
+    CaptureOverlay overlay(std::move(cr), QRect(0, 0, 400, 120));
+    overlay.enterEditing(QRect(20, 10, 320, 80));
+
+    clickTool(overlay, QStringLiteral("Text"));
+
+    auto* view = overlay.findChild<QGraphicsView*>(QStringLiteral("AnnotationGraphicsView"));
+    QVERIFY(view != nullptr);
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(10, 12));
+
+    TextAnnotationItem* textItem = nullptr;
+    for (QGraphicsItem* item : view->scene()->items()) {
+        if (auto* candidate = dynamic_cast<TextAnnotationItem*>(item)) {
+            textItem = candidate;
+            break;
+        }
+    }
+
+    QVERIFY(textItem != nullptr);
+    QVERIFY(textItem->textWidth() < 0.0);
+
+    QTest::keyClicks(view->viewport(),
+                     QStringLiteral("this text is intentionally long enough to need a maximum width"));
+    QVERIFY(textItem->textWidth() <= 310.0);
+}
+
+void CaptureOverlayTests::textAnnotationWrapsAnywhereInsideMaximumWidth()
+{
+    TextAnnotationItem textItem(QPointF(0.0, 0.0), Qt::red);
+    QCOMPARE(textItem.document()->defaultTextOption().wrapMode(), QTextOption::WrapAnywhere);
+}
+
+void CaptureOverlayTests::editingDefaultsToSelectTool()
+{
+    CaptureResult cr = makeSingleScreenResult(80, 60);
+    CaptureOverlay overlay(std::move(cr), QRect(0, 0, 80, 60));
+
+    overlay.enterEditing(QRect(20, 10, 30, 20));
+
+    QToolButton* selectButton = findToolButton(overlay, QStringLiteral("Select"));
+    QVERIFY(selectButton != nullptr);
+    QVERIFY(selectButton->isChecked());
+
+    QToolButton* rectButton = findToolButton(overlay, QStringLiteral("Rect"));
+    QVERIFY(rectButton != nullptr);
+    QVERIFY(!rectButton->isChecked());
+}
+
+void CaptureOverlayTests::selectToolMovesSelectionAndPreservesUndoHistory()
+{
+    CaptureResult cr = makeSingleScreenResult(100, 80);
+    CaptureOverlay overlay(std::move(cr), QRect(0, 0, 100, 80));
+    overlay.enterEditing(QRect(10, 10, 30, 20));
+
+    overlay.addAnnotationItem(new RectAnnotationItem(QRectF(1.0, 1.0, 10.0, 8.0),
+                                                     QPen(Qt::red, 3.0)));
+    QVERIFY(overlay.canUndo());
+
+    auto* view = overlay.findChild<QGraphicsView*>(QStringLiteral("AnnotationGraphicsView"));
+    QVERIFY(view != nullptr);
+
+    QTest::mousePress(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(15, 10));
+    QTest::mouseMove(view->viewport(), QPoint(25, 15));
+    QTest::mouseRelease(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(25, 15));
+
+    QCOMPARE(view->geometry(), QRect(20, 15, 30, 20));
+    QVERIFY(overlay.canUndo());
+    const QColor movedPixel = overlay.renderResultImage().pixelColor(2, 2);
+    QVERIFY(movedPixel.red() > 200);
+    QVERIFY(movedPixel.green() < 200);
+
+    overlay.undo();
+    QVERIFY(overlay.canRedo());
+    QCOMPARE(overlay.renderResultImage().pixelColor(2, 2), QColor(Qt::white));
+}
+
+void CaptureOverlayTests::resizingFromTopLeftShiftsAnnotationsToKeepGlobalPosition()
+{
+    CaptureResult cr = makeSingleScreenResult(100, 80);
+    CaptureOverlay overlay(std::move(cr), QRect(0, 0, 100, 80));
+    overlay.enterEditing(QRect(20, 20, 30, 20));
+
+    auto* item = new RectAnnotationItem(QRectF(5.0, 5.0, 10.0, 8.0), QPen(Qt::red, 3.0));
+    overlay.addAnnotationItem(item);
+
+    auto* view = overlay.findChild<QGraphicsView*>(QStringLiteral("AnnotationGraphicsView"));
+    QVERIFY(view != nullptr);
+
+    QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, QPoint(20, 20));
+    QTest::mouseMove(&overlay, QPoint(15, 16));
+    QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier, QPoint(15, 16));
+
+    QCOMPARE(view->geometry(), QRect(15, 16, 35, 24));
+    QCOMPARE(item->pos(), QPointF(5.0, 4.0));
+    QCOMPARE(item->rect(), QRectF(5.0, 5.0, 10.0, 8.0));
+    QVERIFY(overlay.canUndo());
+    const QColor resizedPixel = overlay.renderResultImage().pixelColor(11, 10);
+    QVERIFY(resizedPixel.red() > 200);
+    QVERIFY(resizedPixel.green() < 200);
+}
+
+void CaptureOverlayTests::resizingFromBottomRightKeepsAnnotationLocalPosition()
+{
+    CaptureResult cr = makeSingleScreenResult(100, 80);
+    CaptureOverlay overlay(std::move(cr), QRect(0, 0, 100, 80));
+    overlay.enterEditing(QRect(20, 20, 30, 20));
+
+    auto* item = new RectAnnotationItem(QRectF(5.0, 5.0, 10.0, 8.0), QPen(Qt::red, 3.0));
+    overlay.addAnnotationItem(item);
+
+    auto* view = overlay.findChild<QGraphicsView*>(QStringLiteral("AnnotationGraphicsView"));
+    QVERIFY(view != nullptr);
+
+    QTest::mousePress(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(29, 19));
+    QTest::mouseMove(view->viewport(), QPoint(34, 23));
+    QTest::mouseRelease(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(34, 23));
+
+    QCOMPARE(view->geometry(), QRect(20, 20, 35, 24));
+    QCOMPARE(item->pos(), QPointF(0.0, 0.0));
+    QCOMPARE(item->rect(), QRectF(5.0, 5.0, 10.0, 8.0));
+    QVERIFY(overlay.canUndo());
+    QCOMPARE(overlay.renderResultImage().pixelColor(6, 6), QColor(Qt::red));
+}
+
+void CaptureOverlayTests::selectToolWheelResizesByOnePixel()
+{
+    CaptureResult cr = makeSingleScreenResult(100, 80);
+    CaptureOverlay overlay(std::move(cr), QRect(0, 0, 100, 80));
+    overlay.enterEditing(QRect(20, 20, 30, 20));
+
+    auto* view = overlay.findChild<QGraphicsView*>(QStringLiteral("AnnotationGraphicsView"));
+    QVERIFY(view != nullptr);
+
+    QWheelEvent wheelEvent(QPointF(15, 10),
+                           view->viewport()->mapToGlobal(QPoint(15, 10)),
+                           QPoint(),
+                           QPoint(0, 120),
+                           Qt::NoButton,
+                           Qt::NoModifier,
+                           Qt::NoScrollPhase,
+                           false);
+    QApplication::sendEvent(view->viewport(), &wheelEvent);
+
+    QCOMPARE(view->geometry(), QRect(19, 19, 32, 22));
+}
+
+void CaptureOverlayTests::annotationToolDoesNotMoveSelection()
+{
+    CaptureResult cr = makeSingleScreenResult(100, 80);
+    CaptureOverlay overlay(std::move(cr), QRect(0, 0, 100, 80));
+    overlay.enterEditing(QRect(10, 10, 30, 20));
+
+    auto* view = overlay.findChild<QGraphicsView*>(QStringLiteral("AnnotationGraphicsView"));
+    QVERIFY(view != nullptr);
+
+    clickTool(overlay, QStringLiteral("Rect"));
+    QTest::mousePress(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(15, 10));
+    QTest::mouseMove(view->viewport(), QPoint(25, 15));
+    QTest::mouseRelease(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(25, 15));
+
+    QCOMPARE(view->geometry(), QRect(10, 10, 30, 20));
+    QVERIFY(overlay.canUndo());
+}
+
+void CaptureOverlayTests::pinWindowUsesToolTopmostFramelessFlagsAndDeletesOnClose()
+{
+    QImage image(160, 100, QImage::Format_ARGB32);
+    image.fill(Qt::white);
+
+    auto* window = new PinWindow(image);
+    QPointer<PinWindow> guard(window);
+    QVERIFY(window->parentWidget() == nullptr);
+    QVERIFY(window->windowFlags().testFlag(Qt::Tool));
+    QVERIFY(window->windowFlags().testFlag(Qt::FramelessWindowHint));
+    QVERIFY(window->windowFlags().testFlag(Qt::WindowStaysOnTopHint));
+    QCOMPARE(window->size(), QSize(160, 100));
+
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTRY_VERIFY(guard.isNull());
+}
+
+void CaptureOverlayTests::pinWindowScalesInitialGeometryToAvailableScreen()
+{
+    QImage image(8000, 4000, QImage::Format_ARGB32);
+    image.fill(Qt::white);
+
+    auto* window = new PinWindow(image);
+    QPointer<PinWindow> guard(window);
+    const QRect available = window->screen() != nullptr
+        ? window->screen()->availableGeometry()
+        : QApplication::primaryScreen()->availableGeometry();
+    const QSize maxSize(qFloor(available.width() * 0.9),
+                        qFloor(available.height() * 0.9));
+
+    QVERIFY(window->width() <= maxSize.width());
+    QVERIFY(window->height() <= maxSize.height());
+    QVERIFY(window->width() > 0);
+    QVERIFY(window->height() > 0);
+    QCOMPARE(qRound((double(window->width()) / double(window->height())) * 100.0), 200);
+
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    window->close();
+    QTRY_VERIFY(guard.isNull());
+}
+
+void CaptureOverlayTests::pinToolbarCreatesIndependentPinWindowAndClosesOverlay()
+{
+    const int beforeCount = pinWindows().size();
+    auto* overlay = new CaptureOverlay(makeSingleScreenResult(80, 60), QRect(0, 0, 80, 60));
+    QPointer<CaptureOverlay> overlayGuard(overlay);
+    overlay->enterEditing(QRect(10, 10, 30, 20));
+
+    clickTool(*overlay, QStringLiteral("Pin"));
+
+    QTRY_VERIFY(overlayGuard.isNull());
+    QTRY_COMPARE(pinWindows().size(), beforeCount + 1);
+
+    PinWindow* window = pinWindows().last();
+    QCOMPARE(window->size(), QSize(30, 20));
+    window->close();
 }
 
 // ---------------------------------------------------------------------------

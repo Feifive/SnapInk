@@ -1,29 +1,41 @@
 #include "AddAnnotationCommand.h"
 
-AddAnnotationCommand::AddAnnotationCommand(AnnotationList* annotations,
-                                           std::unique_ptr<Annotation> annotation,
+#include <QGraphicsItem>
+#include <QGraphicsScene>
+
+AddAnnotationCommand::AddAnnotationCommand(QGraphicsScene* scene,
+                                           QGraphicsItem* item,
                                            std::function<void()> changed,
                                            QUndoCommand* parent)
     : QUndoCommand(parent)
-    , m_annotations(annotations)
-    , m_annotation(std::move(annotation))
+    , m_scene(scene)
+    , m_item(item)
     , m_changed(std::move(changed))
 {
     setText(QStringLiteral("Add annotation"));
 }
 
-AddAnnotationCommand::~AddAnnotationCommand() = default;
-
-void AddAnnotationCommand::undo()
+AddAnnotationCommand::~AddAnnotationCommand()
 {
-    if (m_annotations == nullptr || !m_inserted || m_index < 0
-        || m_index >= static_cast<int>(m_annotations->size())) {
+    if (m_item == nullptr) {
         return;
     }
 
-    auto it = m_annotations->begin() + m_index;
-    m_annotation = std::move(*it);
-    m_annotations->erase(it);
+    if (m_item->scene() != nullptr) {
+        m_item->scene()->removeItem(m_item);
+    }
+
+    delete m_item;
+    m_item = nullptr;
+}
+
+void AddAnnotationCommand::undo()
+{
+    if (m_scene == nullptr || m_item == nullptr || !m_inserted) {
+        return;
+    }
+
+    m_scene->removeItem(m_item);
     m_inserted = false;
 
     if (m_changed) {
@@ -33,15 +45,11 @@ void AddAnnotationCommand::undo()
 
 void AddAnnotationCommand::redo()
 {
-    if (m_annotations == nullptr || m_inserted || m_annotation == nullptr) {
+    if (m_scene == nullptr || m_item == nullptr || m_inserted) {
         return;
     }
 
-    if (m_index < 0 || m_index > static_cast<int>(m_annotations->size())) {
-        m_index = static_cast<int>(m_annotations->size());
-    }
-
-    m_annotations->insert(m_annotations->begin() + m_index, std::move(m_annotation));
+    m_scene->addItem(m_item);
     m_inserted = true;
 
     if (m_changed) {

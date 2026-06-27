@@ -44,7 +44,7 @@ void MainWindow::registerHotkeys()
     connect(m_fullScreenHotkey, &Hotkey::registrationFailed, this, [this](const QString& reason) {
         handleHotkeyRegistrationFailure(QStringLiteral("Ctrl+Alt+S"), reason);
     });
-    m_fullScreenHotkey->registerShortcut();
+    // m_fullScreenHotkey->registerShortcut();
 }
 
 void MainWindow::handleHotkeyRegistrationFailure(const QString& shortcut, const QString& reason)

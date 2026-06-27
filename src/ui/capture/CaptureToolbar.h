@@ -33,6 +33,7 @@ private:
     QToolButton* addButton(const QString& text, const QString& tooltip);
     QToolButton* addToolButton(const QString& text, const QString& tooltip, CaptureTool tool);
 
+    QToolButton* m_selectButton = nullptr;
     QToolButton* m_rectButton = nullptr;
     QToolButton* m_arrowButton = nullptr;
     QToolButton* m_penButton = nullptr;

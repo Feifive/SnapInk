@@ -23,6 +23,8 @@ set(SNAPINK_CAPTURE_SOURCES
     src/ui/capture/CaptureToolbar.cpp
     src/ui/capture/CaptureToolbar.h
     src/ui/capture/CaptureTool.h
+    src/ui/pin/PinWindow.cpp
+    src/ui/pin/PinWindow.h
 )
 
 qt_add_executable(SnapInk
