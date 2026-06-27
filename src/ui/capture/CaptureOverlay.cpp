@@ -284,13 +284,19 @@ void CaptureOverlay::paintSelectionChrome(QPainter& painter,
         painter.drawEllipse(handle, kHandleRadius, kHandleRadius);
     }
 
-    const QString sizeText = QStringLiteral("%1,%2  %3 x %4")
+    const QString sizeText = QStringLiteral("%1,%2  %3 x %4 px")
                                  .arg(selection.left())
                                  .arg(selection.top())
                                  .arg(selection.width())
                                  .arg(selection.height());
+
+    QFont labelFont = painter.font();
+    labelFont.setPixelSize(14);      // 原默认字体通常约 9~10px
+    labelFont.setWeight(QFont::Medium);
+    painter.setFont(labelFont);
+
     const QFontMetrics metrics(painter.font());
-    const QSize textSize = metrics.size(Qt::TextSingleLine, sizeText) + QSize(12, 8);
+    const QSize textSize = metrics.size(Qt::TextSingleLine, sizeText) + QSize(16, 10);
     QPoint labelTopLeft = widgetSelection.topLeft() + QPoint(0, -textSize.height() - 4);
     if (labelTopLeft.y() < 8) {
         labelTopLeft = widgetSelection.bottomLeft() + QPoint(0, 8);
@@ -302,7 +308,7 @@ void CaptureOverlay::paintSelectionChrome(QPainter& painter,
 
     const QRect labelRect(labelTopLeft, textSize);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(0, 0, 0, 210));
+    painter.setBrush(QColor(0, 0, 0, 150));
     painter.drawRoundedRect(labelRect, 4.0, 4.0);
     painter.setPen(Qt::white);
     painter.drawText(labelRect, Qt::AlignCenter, sizeText);

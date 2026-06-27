@@ -37,10 +37,13 @@ void PinContentWidget::setImage(const QImage& image)
 
 void PinContentWidget::setActive(bool active)
 {
-    if (m_active != active) {
-        m_active = active;
-        updateShadowEffect();
+    if (m_active == active) {
+        return;
     }
+
+    m_active = active;
+    updateShadowEffect();
+    update(); // 边框颜色也要刷新
 }
 
 void PinContentWidget::updateShadowEffect()
@@ -59,7 +62,7 @@ void PinContentWidget::updateShadowEffect()
         // Blue glow when focused
         shadow->setBlurRadius(20.0);
         shadow->setOffset(0.0, 0.0);  // No offset for uniform shadow in all directions
-        shadow->setColor(QColor(90, 155, 255, 200));  // Blue with transparency
+        shadow->setColor(QColor(80, 150, 255, 200));  // Blue with transparency
     } else {
         // Black shadow when inactive - darker and more visible
         shadow->setBlurRadius(20.0);
@@ -76,21 +79,32 @@ void PinContentWidget::paintEvent(QPaintEvent* event)
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
 
-    const QRectF contentRect = rect().adjusted(0.5, 0.5, -0.5, -0.5);
-    QPainterPath path;
-    path.addRoundedRect(contentRect, 6.0, 6.0);
+    constexpr qreal kCornerRadius = 0.0;
 
-    // Clip to rounded rectangle and draw image
+    const QRectF contentRect = rect().adjusted(0.5, 0.5, -0.5, -0.5);
+
+    QPainterPath path;
+    path.addRoundedRect(contentRect, kCornerRadius, kCornerRadius);
+
     painter.save();
     painter.setClipPath(path);
+
     if (!m_image.isNull()) {
         painter.drawImage(rect(), m_image);
     } else {
         painter.fillRect(rect(), Qt::white);
     }
+
     painter.restore();
-    
-    // No border drawing - use shadow effect for visual feedback instead
+
+    // 清晰边框：不再依赖阴影“碰巧看起来像边框”
+    const QColor borderColor = m_active
+                                   ? QColor(82, 155, 255, 235)
+                                   : QColor(135, 135, 135, 185);
+
+    painter.setPen(QPen(borderColor, 1.0));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(contentRect, kCornerRadius, kCornerRadius);
 }
 
 namespace

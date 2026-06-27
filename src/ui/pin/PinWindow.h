@@ -98,7 +98,7 @@ private:
 
     // Content widget for rendering the image with shadow effect
     PinContentWidget* m_contentWidget = nullptr;
-    static constexpr int kShadowMargin = 12;
+    static constexpr int kShadowMargin = 18;
 };
 
 #endif // PINWINDOW_H
