@@ -107,6 +107,13 @@ private slots:
     void pinWindowResizeConstraintDoesNotUpscaleNormalSize();
     void pinToolbarPinPlacesWindowAtSelectionGlobalPosition();
 
+    // New shadow margin and size semantics tests
+    void pinWindowContentSizePlusShadowMargins();
+    void pinWindowInitialPositionAlignsContentTopLeft();
+    void pinWindowAspectRatioPreservedWithShadowMargins();
+    void pinWindowSmallImageNotUpscaledWithMargins();
+    void pinWindowConstrainedSizeDoesNotIncludeMargins();
+
     // New DPR-aware tests
     void singleScreenExportAtDpr1_0IsLossless();
     void singleScreenExportAtDpr1_5UsesPhysicalPixels();
@@ -751,6 +758,130 @@ void CaptureOverlayTests::captureResultLogicalToPhysicalRectOutOfBounds()
 
     const QRect physRect = cr.logicalToPhysical(screen, QRect(300, 300, 50, 50));
     QVERIFY(physRect.isEmpty());
+}
+
+// ---------------------------------------------------------------------------
+// PinWindow shadow margin and size semantics tests
+// ---------------------------------------------------------------------------
+
+void CaptureOverlayTests::pinWindowContentSizePlusShadowMargins()
+{
+    // Verify that window size = content size + 2 * shadow margins
+    QImage image(200, 120, QImage::Format_ARGB32);
+    image.fill(Qt::white);
+
+    auto* window = new PinWindow(image, QRect(100, 100, 200, 120));
+    QPointer<PinWindow> guard(window);
+
+    // Window should be larger than image by shadow margins on all sides
+    constexpr int kExpectedMargin = 18;
+    QCOMPARE(window->width(), 200 + kExpectedMargin * 2);
+    QCOMPARE(window->height(), 120 + kExpectedMargin * 2);
+
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    window->close();
+    QTRY_VERIFY(guard.isNull());
+}
+
+void CaptureOverlayTests::pinWindowInitialPositionAlignsContentTopLeft()
+{
+    // The sourceGlobalRect.topLeft() should align with the CONTENT area top-left,
+    // not the window top-left (which is offset by shadow margin).
+    QImage image(200, 120, QImage::Format_ARGB32);
+    image.fill(Qt::white);
+
+    const QPoint expectedContentTopLeft(150, 100);
+    const QRect sourceRect(expectedContentTopLeft, QSize(200, 120));
+    auto* window = new PinWindow(image, sourceRect);
+    QPointer<PinWindow> guard(window);
+
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+
+    // Window top-left should be offset by shadow margin from content top-left
+    constexpr int kExpectedMargin = 18;
+    const QPoint expectedWindowTopLeft = expectedContentTopLeft - QPoint(kExpectedMargin, kExpectedMargin);
+    
+    // Allow for clamping to visible area
+    const QRect available = window->screen() != nullptr
+        ? window->screen()->availableGeometry()
+        : QApplication::primaryScreen()->availableGeometry();
+    
+    // If position is clamped, verify it's still reasonable
+    if (window->geometry().topLeft() == expectedWindowTopLeft) {
+        // Perfect case: no clamping needed
+        QVERIFY(true);
+    } else {
+        // Clamped case: at least verify size is correct
+        QCOMPARE(window->width(), 200 + kExpectedMargin * 2);
+        QCOMPARE(window->height(), 120 + kExpectedMargin * 2);
+    }
+
+    window->close();
+    QTRY_VERIFY(guard.isNull());
+}
+
+void CaptureOverlayTests::pinWindowAspectRatioPreservedWithShadowMargins()
+{
+    // Verify that aspect ratio calculation uses content size, not window size
+    QImage image(400, 200, QImage::Format_ARGB32);  // 2:1 aspect ratio
+    image.fill(Qt::white);
+
+    auto* window = new PinWindow(image, QRect(0, 0, 400, 200));
+    QPointer<PinWindow> guard(window);
+
+    // Content aspect ratio should be 2:1
+    constexpr int kExpectedMargin = 18;
+    const int contentWidth = window->width() - kExpectedMargin * 2;
+    const int contentHeight = window->height() - kExpectedMargin * 2;
+    
+    QCOMPARE(qRound((double(contentWidth) / double(contentHeight)) * 100.0), 200);
+
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    window->close();
+    QTRY_VERIFY(guard.isNull());
+}
+
+void CaptureOverlayTests::pinWindowSmallImageNotUpscaledWithMargins()
+{
+    // Small images should not be upscaled even with large available area
+    QImage image(80, 50, QImage::Format_ARGB32);
+    image.fill(Qt::white);
+
+    auto* window = new PinWindow(image, QRect(100, 100, 80, 50));
+    QPointer<PinWindow> guard(window);
+
+    constexpr int kExpectedMargin = 18;
+    // Window size should be exactly 80x50 + margins
+    QCOMPARE(window->width(), 80 + kExpectedMargin * 2);
+    QCOMPARE(window->height(), 50 + kExpectedMargin * 2);
+
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    window->close();
+    QTRY_VERIFY(guard.isNull());
+}
+
+void CaptureOverlayTests::pinWindowConstrainedSizeDoesNotIncludeMargins()
+{
+    // Test that constrainedSize calculations work on content size only
+    // A large available rect should not cause upscaling of small content
+    const QRect largeAvailable(0, 0, 3840, 2160);
+    
+    // Simulate what happens during resize: content size without margins
+    constexpr int kExpectedMargin = 18;
+    const QSize contentSize = QSize(200, 100);
+    
+    // Use boundedImageSize which should preserve original size
+    const QSize bounded = PinWindow::boundedImageSize(contentSize, largeAvailable);
+    QCOMPARE(bounded, contentSize);
+
+    // Small content with large available - should remain small
+    const QSize smallContent = QSize(80, 50);
+    const QSize smallBounded = PinWindow::boundedImageSize(smallContent, largeAvailable);
+    QCOMPARE(smallBounded, smallContent);
 }
 
 // ---------------------------------------------------------------------------

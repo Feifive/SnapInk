@@ -6,6 +6,27 @@
 #include <QRect>
 #include <QWidget>
 
+/// Internal content widget that renders the pinned image with rounded corners and border.
+/// This widget is transparent to mouse events so PinWindow handles all interactions.
+class PinContentWidget : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit PinContentWidget(const QImage& image, qreal aspectRatio, QWidget* parent = nullptr);
+
+    void setImage(const QImage& image);
+    void setActive(bool active);
+    bool isActive() const { return m_active; }
+    void updateShadowEffect();
+protected:
+    void paintEvent(QPaintEvent* event) override;
+
+    QImage m_image;
+    qreal m_aspectRatio = 1.0;
+    bool m_active = false;
+};
+
 class PinWindow : public QWidget
 {
     Q_OBJECT
@@ -74,6 +95,10 @@ private:
     qreal m_aspectRatio = 1.0;
     bool m_hovered = false;
     bool m_closing = false;
+
+    // Content widget for rendering the image with shadow effect
+    PinContentWidget* m_contentWidget = nullptr;
+    static constexpr int kShadowMargin = 12;
 };
 
 #endif // PINWINDOW_H

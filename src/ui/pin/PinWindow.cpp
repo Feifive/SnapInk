@@ -11,8 +11,87 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QScreen>
 #include <QtMath>
+
+// ============================================================================
+// PinContentWidget Implementation
+// ============================================================================
+
+PinContentWidget::PinContentWidget(const QImage& image, qreal aspectRatio, QWidget* parent)
+    : QWidget(parent)
+    , m_image(image)
+    , m_aspectRatio(aspectRatio)
+{
+    setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    setAttribute(Qt::WA_NoSystemBackground, true);
+    setAutoFillBackground(false);
+}
+
+void PinContentWidget::setImage(const QImage& image)
+{
+    m_image = image;
+    update();
+}
+
+void PinContentWidget::setActive(bool active)
+{
+    if (m_active != active) {
+        m_active = active;
+        updateShadowEffect();
+    }
+}
+
+void PinContentWidget::updateShadowEffect()
+{
+    // Get existing shadow effect or create new one
+    auto* shadow = qobject_cast<QGraphicsDropShadowEffect*>(graphicsEffect());
+    
+    if (!shadow) {
+        // Create new shadow effect if it doesn't exist
+        shadow = new QGraphicsDropShadowEffect(this);
+        setGraphicsEffect(shadow);
+    }
+
+    // Update shadow properties based on active state
+    if (m_active) {
+        // Blue glow when focused
+        shadow->setBlurRadius(20.0);
+        shadow->setOffset(0.0, 0.0);  // No offset for uniform shadow in all directions
+        shadow->setColor(QColor(90, 155, 255, 200));  // Blue with transparency
+    } else {
+        // Black shadow when inactive - darker and more visible
+        shadow->setBlurRadius(20.0);
+        shadow->setOffset(0.0, 0.0);  // No offset for uniform shadow in all directions
+        shadow->setColor(QColor(0, 0, 0, 200));  // Darker black for better visibility
+    }
+}
+
+void PinContentWidget::paintEvent(QPaintEvent* event)
+{
+    Q_UNUSED(event)
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+    const QRectF contentRect = rect().adjusted(0.5, 0.5, -0.5, -0.5);
+    QPainterPath path;
+    path.addRoundedRect(contentRect, 6.0, 6.0);
+
+    // Clip to rounded rectangle and draw image
+    painter.save();
+    painter.setClipPath(path);
+    if (!m_image.isNull()) {
+        painter.drawImage(rect(), m_image);
+    } else {
+        painter.fillRect(rect(), Qt::white);
+    }
+    painter.restore();
+    
+    // No border drawing - use shadow effect for visual feedback instead
+}
 
 namespace
 {
@@ -64,27 +143,39 @@ PinWindow::PinWindow(const QImage& image, const QRect& sourceGlobalRect, QWidget
 {
     Q_UNUSED(parent)
 
+    // Set up transparent window for shadow effect
     setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
-    setAttribute(Qt::WA_TranslucentBackground, false);
+    setAttribute(Qt::WA_TranslucentBackground, true);
+    setAutoFillBackground(false);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
 
+    // Calculate content size (actual image display area)
     const QSize imageSize = deviceIndependentImageSize(m_originalImage);
     m_aspectRatio = imageSize.height() > 0
         ? qreal(imageSize.width()) / qreal(imageSize.height())
         : 1.0;
 
     const QRect available = availableGeometryFor(sourceGlobalRect.center());
-    resize(boundedImageSize(deviceIndependentImageSize(m_originalImage), available));
+    const QSize contentSize = boundedImageSize(imageSize, available);
 
-    const QRect initialGeometry(sourceGlobalRect.topLeft(), size());
+    // Window size includes shadow margins on all sides
+    const QSize windowSize(contentSize.width() + kShadowMargin * 2,
+                           contentSize.height() + kShadowMargin * 2);
+    resize(windowSize);
+
+    // Position window so that content top-left aligns with sourceGlobalRect.topLeft()
+    const QPoint windowTopLeft = sourceGlobalRect.topLeft() - QPoint(kShadowMargin, kShadowMargin);
+    const QRect initialGeometry(windowTopLeft, windowSize);
     move(clampedVisibleGeometry(initialGeometry).topLeft());
 
-    auto* shadow = new QGraphicsDropShadowEffect(this);
-    shadow->setBlurRadius(14.0);
-    shadow->setOffset(0.0, 2.0);
-    shadow->setColor(QColor(0, 0, 0, 95));
-    setGraphicsEffect(shadow);
+    // Create content widget with shadow effect
+    m_contentWidget = new PinContentWidget(m_originalImage, m_aspectRatio, this);
+    m_contentWidget->setGeometry(kShadowMargin, kShadowMargin,
+                                  contentSize.width(), contentSize.height());
+
+    // Initialize with black shadow (inactive state)
+    m_contentWidget->updateShadowEffect();
 }
 
 QSize PinWindow::boundedImageSize(const QSize& requested, const QRect& available)
@@ -129,14 +220,20 @@ QRect PinWindow::clampedVisibleGeometry(const QRect& geometry) const
 
 PinWindow::ResizeEdge PinWindow::hitTestResizeEdge(const QPoint& localPos) const
 {
+    // Hit test should work on the entire window area (including shadow margins)
+    // so users can resize by dragging near the edges of the visible content.
     if (!rect().contains(localPos)) {
         return ResizeEdge::None;
     }
 
-    const bool left = localPos.x() <= kResizeHitWidth;
-    const bool right = localPos.x() >= width() - kResizeHitWidth - 1;
-    const bool top = localPos.y() <= kResizeHitWidth;
-    const bool bottom = localPos.y() >= height() - kResizeHitWidth - 1;
+    // Expand hit test area to include shadow margin regions
+    // This allows resizing when mouse is over the shadow area near edges
+    constexpr int kExtendedHitWidth = kResizeHitWidth + kShadowMargin / 2;
+    
+    const bool left = localPos.x() <= kExtendedHitWidth;
+    const bool right = localPos.x() >= width() - kExtendedHitWidth - 1;
+    const bool top = localPos.y() <= kExtendedHitWidth;
+    const bool bottom = localPos.y() >= height() - kExtendedHitWidth - 1;
 
     if (top && left) {
         return ResizeEdge::TopLeft;
@@ -205,7 +302,9 @@ QRect PinWindow::aspectResizeGeometry(const QPoint& globalPos) const
 {
     const QPoint delta = globalPos - m_pressGlobalPos;
     const QRect available = availableGeometryFor(globalPos);
-    QSize targetSize = m_initialGeometry.size();
+    
+    // Work with content size (excluding shadow margins)
+    QSize targetContentSize = m_initialGeometry.size() - QSize(kShadowMargin * 2, kShadowMargin * 2);
 
     const bool adjustsLeft = m_activeResizeEdge == ResizeEdge::Left
                              || m_activeResizeEdge == ResizeEdge::TopLeft
@@ -224,29 +323,33 @@ QRect PinWindow::aspectResizeGeometry(const QPoint& globalPos) const
     const bool vertical = adjustsTop || adjustsBottom;
     if (horizontal && !vertical) {
         const int widthDelta = adjustsLeft ? -delta.x() : delta.x();
-        targetSize.setWidth(m_initialGeometry.width() + widthDelta);
-        targetSize.setHeight(qRound(targetSize.width() / m_aspectRatio));
+        targetContentSize.setWidth(targetContentSize.width() + widthDelta);
+        targetContentSize.setHeight(qRound(targetContentSize.width() / m_aspectRatio));
     } else if (!horizontal && vertical) {
         const int heightDelta = adjustsTop ? -delta.y() : delta.y();
-        targetSize.setHeight(m_initialGeometry.height() + heightDelta);
-        targetSize.setWidth(qRound(targetSize.height() * m_aspectRatio));
+        targetContentSize.setHeight(targetContentSize.height() + heightDelta);
+        targetContentSize.setWidth(qRound(targetContentSize.height() * m_aspectRatio));
     } else {
         const int widthDelta = adjustsLeft ? -delta.x() : delta.x();
         const int heightDelta = adjustsTop ? -delta.y() : delta.y();
-        const int widthCandidate = m_initialGeometry.width() + widthDelta;
+        const int widthCandidate = targetContentSize.width() + widthDelta;
         const int heightFromWidth = qRound(widthCandidate / m_aspectRatio);
-        const int heightCandidate = m_initialGeometry.height() + heightDelta;
+        const int heightCandidate = targetContentSize.height() + heightDelta;
         const int widthFromHeight = qRound(heightCandidate * m_aspectRatio);
         if (qAbs(widthDelta) >= qAbs(qRound(heightDelta * m_aspectRatio))) {
-            targetSize = QSize(widthCandidate, heightFromWidth);
+            targetContentSize = QSize(widthCandidate, heightFromWidth);
         } else {
-            targetSize = QSize(widthFromHeight, heightCandidate);
+            targetContentSize = QSize(widthFromHeight, heightCandidate);
         }
     }
 
-    targetSize = constrainedSize(targetSize, available);
+    targetContentSize = constrainedSize(targetContentSize, available);
+    
+    // Convert content size to window size by adding shadow margins
+    const QSize targetWindowSize(targetContentSize.width() + kShadowMargin * 2,
+                                  targetContentSize.height() + kShadowMargin * 2);
 
-    QRect geometry(QPoint(0, 0), targetSize);
+    QRect geometry(QPoint(0, 0), targetWindowSize);
     if (adjustsLeft) {
         geometry.moveRight(m_initialGeometry.right());
     } else {
@@ -270,64 +373,62 @@ QRect PinWindow::aspectResizeGeometry(const QPoint& globalPos) const
 
 QSize PinWindow::constrainedSize(QSize size, const QRect& available) const
 {
+    // Size passed here is content size (without shadow margins)
     return constrainPinSize(size, m_aspectRatio, available);
 }
 
 void PinWindow::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event)
-
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing, false);
-    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-
-    if (!m_originalImage.isNull()) {
-        painter.drawImage(rect(), m_originalImage);
-    } else {
-        painter.fillRect(rect(), Qt::white);
-    }
-
-    const QColor border = (m_hovered || hasFocus())
-        ? QColor(64, 145, 255)
-        : QColor(214, 220, 228);
-    painter.setPen(QPen(border, (m_hovered || hasFocus()) ? 2 : 1));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawRect(rect().adjusted(0, 0, -1, -1));
+    // Content is rendered by m_contentWidget, no need to paint here
+    // The window background is transparent to allow shadow effect
 }
 
 void PinWindow::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
+    
+    // Update content widget geometry to maintain shadow margins
+    if (m_contentWidget) {
+        const QSize contentSize = size() - QSize(kShadowMargin * 2, kShadowMargin * 2);
+        m_contentWidget->setGeometry(kShadowMargin, kShadowMargin,
+                                      contentSize.width(), contentSize.height());
+    }
 }
 
 void PinWindow::enterEvent(QEnterEvent* event)
 {
     m_hovered = true;
+    // Don't activate on hover anymore - only on focus
     updateHoverState(event->position().toPoint());
-    update();
 }
 
 void PinWindow::leaveEvent(QEvent* event)
 {
     QWidget::leaveEvent(event);
     m_hovered = false;
+    // No need to deactivate on leave since we don't activate on hover
     if (m_dragState == DragState::None) {
         m_hoverResizeEdge = ResizeEdge::None;
         setCursor(Qt::ArrowCursor);
     }
-    update();
 }
 
 void PinWindow::focusInEvent(QFocusEvent* event)
 {
     QWidget::focusInEvent(event);
-    update();
+    if (m_contentWidget) {
+        m_contentWidget->setActive(true);
+    }
 }
 
 void PinWindow::focusOutEvent(QFocusEvent* event)
 {
     QWidget::focusOutEvent(event);
-    update();
+    // Keep active if mouse is still hovering, even when focus is lost
+    if (m_contentWidget && !m_hovered) {
+        m_contentWidget->setActive(false);
+    }
 }
 
 void PinWindow::mousePressEvent(QMouseEvent* event)
