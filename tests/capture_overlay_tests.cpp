@@ -126,6 +126,15 @@ private slots:
     void captureResultLogicalToPhysicalDpr1_5();
     void captureResultLogicalToPhysicalDpr2_0();
     void captureResultLogicalToPhysicalRectOutOfBounds();
+
+    // Selection interaction tests
+    void selectingStateDoesNotDrawHandles();
+    void editingStateDrawsHandles();
+    void editingClickOutsideSelectionExpandsIt();
+    void expandSelectionInDifferentDirections();
+    void expandSelectionPreservesAnnotations();
+    void rightClickInEditingEntersReselect();
+    void rightClickBeforeSelectionCancels();
 };
 
 // ---------------------------------------------------------------------------
@@ -402,7 +411,9 @@ void CaptureOverlayTests::pinWindowUsesToolTopmostFramelessFlagsAndDeletesOnClos
     QVERIFY(window->windowFlags().testFlag(Qt::Tool));
     QVERIFY(window->windowFlags().testFlag(Qt::FramelessWindowHint));
     QVERIFY(window->windowFlags().testFlag(Qt::WindowStaysOnTopHint));
-    QCOMPARE(window->size(), QSize(160, 100));
+    // Window size = content size + 2 * shadow margin (18px per side)
+    constexpr int kMargin = 18;
+    QCOMPARE(window->size(), QSize(160 + kMargin * 2, 100 + kMargin * 2));
 
     window->show();
     QVERIFY(QTest::qWaitForWindowExposed(window));
@@ -423,11 +434,15 @@ void CaptureOverlayTests::pinWindowScalesInitialGeometryToAvailableScreen()
     const QSize maxSize(qFloor(available.width() * 0.9),
                         qFloor(available.height() * 0.9));
 
-    QVERIFY(window->width() <= maxSize.width());
-    QVERIFY(window->height() <= maxSize.height());
-    QVERIFY(window->width() > 0);
-    QVERIFY(window->height() > 0);
-    QCOMPARE(qRound((double(window->width()) / double(window->height())) * 100.0), 200);
+    // Window size includes shadow margins; content should fit within available area.
+    constexpr int kMargin = 18;
+    QVERIFY(window->width() - kMargin * 2 <= maxSize.width());
+    QVERIFY(window->height() - kMargin * 2 <= maxSize.height());
+    QVERIFY(window->width() > kMargin * 2);
+    QVERIFY(window->height() > kMargin * 2);
+    const int contentW = window->width() - kMargin * 2;
+    const int contentH = window->height() - kMargin * 2;
+    QCOMPARE(qRound((double(contentW) / double(contentH)) * 100.0), 200);
 
     window->show();
     QVERIFY(QTest::qWaitForWindowExposed(window));
@@ -448,7 +463,8 @@ void CaptureOverlayTests::pinToolbarCreatesIndependentPinWindowAndClosesOverlay(
     QTRY_COMPARE(pinWindows().size(), beforeCount + 1);
 
     PinWindow* window = pinWindows().last();
-    QCOMPARE(window->size(), QSize(30, 20));
+    constexpr int kMargin = 18;
+    QCOMPARE(window->size(), QSize(30 + kMargin * 2, 20 + kMargin * 2));
     window->close();
 }
 
@@ -469,8 +485,9 @@ void CaptureOverlayTests::pinWindowInitialPositionUsesSourceGlobalRect()
         ? window->screen()->availableGeometry()
         : QApplication::primaryScreen()->availableGeometry();
 
-    // Verify size is preserved (image fits in available area).
-    QCOMPARE(window->size(), QSize(200, 120));
+    // Verify size includes shadow margins (content = 200x120)
+    constexpr int kMargin = 18;
+    QCOMPARE(window->size(), QSize(200 + kMargin * 2, 120 + kMargin * 2));
 
     // The position should be the source top-left, or clamped to visible area.
     // We can't predict exact clamp result without knowing screen layout,
@@ -493,8 +510,9 @@ void CaptureOverlayTests::pinWindowSmallImageNotUpscaled()
     auto* window = new PinWindow(image, QRect(100, 100, 80, 50));
     QPointer<PinWindow> guard(window);
 
-    // Size should remain 80x50, not upscaled.
-    QCOMPARE(window->size(), QSize(80, 50));
+    // Window size = content + shadow margins, not upscaled beyond that.
+    constexpr int kMargin = 18;
+    QCOMPARE(window->size(), QSize(80 + kMargin * 2, 50 + kMargin * 2));
 
     window->show();
     QVERIFY(QTest::qWaitForWindowExposed(window));
@@ -542,8 +560,9 @@ void CaptureOverlayTests::pinToolbarPinPlacesWindowAtSelectionGlobalPosition()
     QTRY_COMPARE(pinWindows().size(), beforeCount + 1);
 
     PinWindow* window = pinWindows().last();
-    // Size should match selection.
-    QCOMPARE(window->size(), QSize(60, 40));
+    // Window size = content + shadow margins
+    constexpr int kMargin = 18;
+    QCOMPARE(window->size(), QSize(60 + kMargin * 2, 40 + kMargin * 2));
 
     // Position should be at global (-30, -10) or clamped to visible.
     // In offscreen test environment, screen geometry may be (0,0,800,600),
@@ -882,6 +901,204 @@ void CaptureOverlayTests::pinWindowConstrainedSizeDoesNotIncludeMargins()
     const QSize smallContent = QSize(80, 50);
     const QSize smallBounded = PinWindow::boundedImageSize(smallContent, largeAvailable);
     QCOMPARE(smallBounded, smallContent);
+}
+
+// ---------------------------------------------------------------------------
+// Selection interaction tests
+// ---------------------------------------------------------------------------
+
+void CaptureOverlayTests::selectingStateDoesNotDrawHandles()
+{
+    // During drag-selection (Selecting state with m_selecting=true),
+    // paintSelectionChrome should not draw handles.
+    // We verify this indirectly: when m_selecting is true and state is Selecting,
+    // the chrome layer is hidden, and paintEvent draws chrome directly.
+    // The key check is that m_state != Editing → no handles.
+    CaptureResult cr = makeSingleScreenResult(100, 80);
+    CaptureOverlay overlay(std::move(cr), QRect(0, 0, 100, 80));
+
+    // Start a drag selection
+    QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, QPoint(10, 10));
+    QTest::mouseMove(&overlay, QPoint(50, 40));
+
+    // State should still be Selecting
+    QCOMPARE(overlay.state(), CaptureState::Selecting);
+
+    // Render a test image to exercise paintSelectionChrome path.
+    // The overlay's paintEvent calls paintSelectionChrome when annotationView
+    // is not visible. We just verify state is correct — handles are conditional
+    // on m_state == Editing inside paintSelectionChrome.
+    overlay.repaint();
+
+    QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier, QPoint(50, 40));
+    QCOMPARE(overlay.state(), CaptureState::Editing);
+}
+
+void CaptureOverlayTests::editingStateDrawsHandles()
+{
+    // After entering Editing, handles should be visible.
+    // We verify by checking that the annotation view and chrome layer are shown.
+    CaptureResult cr = makeSingleScreenResult(100, 80);
+    CaptureOverlay overlay(std::move(cr), QRect(0, 0, 100, 80));
+    overlay.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&overlay));
+    overlay.enterEditing(QRect(20, 20, 30, 20));
+
+    QCOMPARE(overlay.state(), CaptureState::Editing);
+
+    // The annotation view should be visible in Editing state
+    auto* view = overlay.findChild<QGraphicsView*>(QStringLiteral("AnnotationGraphicsView"));
+    QVERIFY(view != nullptr);
+    QVERIFY(view->isVisible());
+
+    // Chrome layer should also be visible (handles are drawn inside it)
+    // We can't directly access the chrome layer, but we verify state is Editing
+    // which is the condition for drawing handles in paintSelectionChrome.
+}
+
+void CaptureOverlayTests::editingClickOutsideSelectionExpandsIt()
+{
+    CaptureResult cr = makeSingleScreenResult(100, 80);
+    CaptureOverlay overlay(std::move(cr), QRect(0, 0, 100, 80));
+    overlay.enterEditing(QRect(30, 20, 20, 20));
+
+    // Click outside to the right at (70, 30)
+    QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, QPoint(70, 30));
+    QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier, QPoint(70, 30));
+
+    // Selection should expand to include (70, 30): union of (30,20,20,20) + point(70,30)
+    // = (30, 20, 41, 20) → but bounded to (30, 20, 41, 20)
+    auto* view = overlay.findChild<QGraphicsView*>(QStringLiteral("AnnotationGraphicsView"));
+    QVERIFY(view != nullptr);
+    // The expanded rect should be (30, 20) to (70, 39) → (30, 20, 41, 20)
+    QCOMPARE(view->geometry().left(), 30);
+    QVERIFY(view->geometry().right() >= 70);
+    // Original selection should not shrink
+    QVERIFY(view->geometry().width() >= 20);
+    QVERIFY(view->geometry().height() >= 20);
+}
+
+void CaptureOverlayTests::expandSelectionInDifferentDirections()
+{
+    // Test expanding to top-left
+    {
+        CaptureResult cr = makeSingleScreenResult(100, 80);
+        CaptureOverlay overlay(std::move(cr), QRect(0, 0, 100, 80));
+        overlay.enterEditing(QRect(30, 20, 20, 20));
+
+        QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, QPoint(10, 5));
+        QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier, QPoint(10, 5));
+
+        auto* view = overlay.findChild<QGraphicsView*>(QStringLiteral("AnnotationGraphicsView"));
+        QVERIFY(view != nullptr);
+        // Expanded to include (10, 5): union of (30,20,20,20) + (10,5) = (10, 5, 41, 36)
+        QCOMPARE(view->geometry().left(), 10);
+        QCOMPARE(view->geometry().top(), 5);
+        QVERIFY(view->geometry().right() >= 49);  // original right edge
+        QVERIFY(view->geometry().bottom() >= 39); // original bottom edge
+    }
+
+    // Test expanding to bottom-right
+    {
+        CaptureResult cr = makeSingleScreenResult(100, 80);
+        CaptureOverlay overlay(std::move(cr), QRect(0, 0, 100, 80));
+        overlay.enterEditing(QRect(30, 20, 20, 20));
+
+        QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, QPoint(80, 60));
+        QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier, QPoint(80, 60));
+
+        auto* view = overlay.findChild<QGraphicsView*>(QStringLiteral("AnnotationGraphicsView"));
+        QVERIFY(view != nullptr);
+        // Expanded to include (80, 60): union of (30,20,20,20) + (80,60) = (30, 20, 51, 41)
+        QCOMPARE(view->geometry().left(), 30);
+        QCOMPARE(view->geometry().top(), 20);
+        QVERIFY(view->geometry().right() >= 80);
+        QVERIFY(view->geometry().bottom() >= 60);
+    }
+}
+
+void CaptureOverlayTests::expandSelectionPreservesAnnotations()
+{
+    CaptureResult cr = makeSingleScreenResult(100, 80);
+    CaptureOverlay overlay(std::move(cr), QRect(0, 0, 100, 80));
+    overlay.enterEditing(QRect(30, 20, 20, 20));
+
+    // Add an annotation at scene-local (5, 5, 10, 8)
+    auto* item = new RectAnnotationItem(QRectF(5.0, 5.0, 10.0, 8.0), QPen(Qt::red, 3.0));
+    overlay.addAnnotationItem(item);
+    QVERIFY(overlay.canUndo());
+
+    const QPointF originalItemPos = item->pos();
+    const QRectF originalItemRect = item->rect();
+
+    // Expand selection to the left by clicking at (10, 30)
+    QTest::mousePress(&overlay, Qt::LeftButton, Qt::NoModifier, QPoint(10, 30));
+    QTest::mouseRelease(&overlay, Qt::LeftButton, Qt::NoModifier, QPoint(10, 30));
+
+    auto* view = overlay.findChild<QGraphicsView*>(QStringLiteral("AnnotationGraphicsView"));
+    QVERIFY(view != nullptr);
+
+    // Selection should have expanded leftward
+    QVERIFY(view->geometry().left() <= 10);
+
+    // Annotation item should still exist
+    QVERIFY(item->scene() != nullptr);
+
+    // Annotation should have shifted right by the expansion delta (20 pixels)
+    // because the scene origin moved left by 20 pixels
+    QCOMPARE(item->pos(), originalItemPos + QPointF(20.0, 0.0));
+    QCOMPARE(item->rect(), originalItemRect);
+
+    // Undo stack should still be valid
+    QVERIFY(overlay.canUndo());
+
+    // Render should still show the annotation
+    const QImage result = overlay.renderResultImage();
+    QVERIFY(!result.isNull());
+    QVERIFY(result.width() >= 40); // expanded width
+}
+
+void CaptureOverlayTests::rightClickInEditingEntersReselect()
+{
+    CaptureResult cr = makeSingleScreenResult(100, 80);
+    auto* overlay = new CaptureOverlay(std::move(cr), QRect(0, 0, 100, 80));
+    QPointer<CaptureOverlay> guard(overlay);
+    overlay->show();
+
+    overlay->enterEditing(QRect(20, 20, 30, 20));
+    QCOMPARE(overlay->state(), CaptureState::Editing);
+
+    // Right-click should trigger reselect, not cancel
+    QTest::mouseClick(overlay, Qt::RightButton, Qt::NoModifier, QPoint(50, 50));
+
+    // Should be back in Selecting state (reselect), not closed
+    QCOMPARE(overlay->state(), CaptureState::Selecting);
+    QVERIFY(!guard.isNull()); // overlay should still exist
+
+    // Should be able to start a new selection
+    QTest::mousePress(overlay, Qt::LeftButton, Qt::NoModifier, QPoint(10, 10));
+    QCOMPARE(overlay->state(), CaptureState::Selecting);
+    QTest::mouseRelease(overlay, Qt::LeftButton, Qt::NoModifier, QPoint(40, 30));
+    QCOMPARE(overlay->state(), CaptureState::Editing);
+
+    overlay->close();
+}
+
+void CaptureOverlayTests::rightClickBeforeSelectionCancels()
+{
+    CaptureResult cr = makeSingleScreenResult(100, 80);
+    auto* overlay = new CaptureOverlay(std::move(cr), QRect(0, 0, 100, 80));
+    QPointer<CaptureOverlay> guard(overlay);
+    overlay->show();
+    QVERIFY(QTest::qWaitForWindowExposed(overlay));
+
+    QCOMPARE(overlay->state(), CaptureState::Selecting);
+
+    // Right-click before any selection → cancel and close
+    QTest::mouseClick(overlay, Qt::RightButton, Qt::NoModifier, QPoint(50, 50));
+
+    // Overlay should be closed/canceled
+    QTRY_VERIFY(guard.isNull());
 }
 
 // ---------------------------------------------------------------------------

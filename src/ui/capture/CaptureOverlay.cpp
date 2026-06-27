@@ -14,6 +14,7 @@
 #include <QGraphicsView>
 #include <QKeyEvent>
 #include <QMessageBox>
+#include <QContextMenuEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QResizeEvent>
@@ -264,24 +265,28 @@ void CaptureOverlay::paintSelectionChrome(QPainter& painter,
                                           const QRect& selection) const
 {
     painter.save();
-    painter.setPen(QPen(QColor(47, 128, 237), 2.0));
+    painter.setPen(QPen(QColor(47, 128, 237), 3.0));
     painter.setBrush(Qt::NoBrush);
-    painter.drawRect(widgetSelection.adjusted(0, 0, -1, -1));
+    painter.drawRect(widgetSelection);
 
-    painter.setPen(QPen(QColor(47, 128, 237), 1.0));
-    painter.setBrush(Qt::white);
-    const QList<QPoint> handles = {
-        widgetSelection.topLeft(),
-        QPoint(widgetSelection.center().x(), widgetSelection.top()),
-        widgetSelection.topRight(),
-        QPoint(widgetSelection.right(), widgetSelection.center().y()),
-        widgetSelection.bottomRight(),
-        QPoint(widgetSelection.center().x(), widgetSelection.bottom()),
-        widgetSelection.bottomLeft(),
-        QPoint(widgetSelection.left(), widgetSelection.center().y()),
-    };
-    for (const QPoint& handle : handles) {
-        painter.drawEllipse(handle, kHandleRadius, kHandleRadius);
+    // Only draw resize handles when selection is confirmed (Editing state),
+    // not during the initial drag-selection process.
+    if (m_state == CaptureState::Editing) {
+        painter.setPen(QPen(QColor(47, 128, 237), 1.0));
+        painter.setBrush(Qt::white);
+        const QList<QPoint> handles = {
+            widgetSelection.topLeft(),
+            QPoint(widgetSelection.center().x(), widgetSelection.top()),
+            widgetSelection.topRight(),
+            QPoint(widgetSelection.right(), widgetSelection.center().y()),
+            widgetSelection.bottomRight(),
+            QPoint(widgetSelection.center().x(), widgetSelection.bottom()),
+            widgetSelection.bottomLeft(),
+            QPoint(widgetSelection.left(), widgetSelection.center().y()),
+        };
+        for (const QPoint& handle : handles) {
+            painter.drawEllipse(handle, kHandleRadius, kHandleRadius);
+        }
     }
 
     const QString sizeText = QStringLiteral("%1,%2  %3 x %4 px")
@@ -291,7 +296,7 @@ void CaptureOverlay::paintSelectionChrome(QPainter& painter,
                                  .arg(selection.height());
 
     QFont labelFont = painter.font();
-    labelFont.setPixelSize(14);      // 原默认字体通常约 9~10px
+    labelFont.setPixelSize(14);
     labelFont.setWeight(QFont::Medium);
     painter.setFont(labelFont);
 
@@ -669,6 +674,45 @@ void CaptureOverlay::shiftAllAnnotations(qreal dx, qreal dy)
     }
 }
 
+void CaptureOverlay::expandSelectionToPoint(const QPoint& imagePoint)
+{
+    if (m_state != CaptureState::Editing || m_selectionImageRect.isEmpty()) {
+        return;
+    }
+
+    // Commit any active text editing before modifying the selection.
+    commitActiveTextEditing();
+
+    // Compute the minimal bounding rect that contains both the old selection
+    // and the click point (union of old rect + click point).
+    const QRect oldRect = m_selectionImageRect;
+    QRect expanded = oldRect;
+
+    if (imagePoint.x() < oldRect.left()) {
+        expanded.setLeft(imagePoint.x());
+    } else if (imagePoint.x() > oldRect.right()) {
+        expanded.setRight(imagePoint.x());
+    }
+
+    if (imagePoint.y() < oldRect.top()) {
+        expanded.setTop(imagePoint.y());
+    } else if (imagePoint.y() > oldRect.bottom()) {
+        expanded.setBottom(imagePoint.y());
+    }
+
+    const QRect bounded = boundedSelectionRect(expanded);
+    if (bounded.isEmpty() || bounded == oldRect) {
+        return;
+    }
+
+    // Use applySelectionRect which handles:
+    // - shifting existing annotations to compensate for origin changes
+    // - updating m_selectionImageRect, m_selectionStart, m_selectionEnd
+    // - updating scene rect, selection background, annotation view geometry
+    // - repositioning toolbar and refreshing chrome
+    applySelectionRect(bounded);
+}
+
 void CaptureOverlay::setupAnnotationView()
 {
     m_annotationScene = new QGraphicsScene(this);
@@ -969,8 +1013,14 @@ void CaptureOverlay::resizeEvent(QResizeEvent* event)
 
 void CaptureOverlay::mousePressEvent(QMouseEvent* event)
 {
+    // --- Right button: context-dependent behavior ---
     if (event->button() == Qt::RightButton) {
-        cancelAndClose();
+        event->accept();
+        if (m_state == CaptureState::Editing) {
+            reselect();
+        } else {
+            cancelAndClose();
+        }
         return;
     }
 
@@ -1002,6 +1052,9 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event)
         }
         if (isInsideSelection(imagePoint)) {
             beginMoveSelection(imagePoint);
+        } else {
+            // Left click outside selection → expand selection to include click point
+            expandSelectionToPoint(imagePoint);
         }
     }
 }
@@ -1081,6 +1134,12 @@ void CaptureOverlay::keyPressEvent(QKeyEvent* event)
     QWidget::keyPressEvent(event);
 }
 
+void CaptureOverlay::contextMenuEvent(QContextMenuEvent* event)
+{
+    // Suppress default context menu; right-click is handled in mousePressEvent.
+    event->accept();
+}
+
 bool CaptureOverlay::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched != m_annotationView->viewport() || m_state != CaptureState::Editing) {
@@ -1090,7 +1149,8 @@ bool CaptureOverlay::eventFilter(QObject* watched, QEvent* event)
     if (event->type() == QEvent::MouseButtonPress) {
         auto* mouseEvent = static_cast<QMouseEvent*>(event);
         if (mouseEvent->button() == Qt::RightButton) {
-            cancelAndClose();
+            // In Editing state, right-click on annotation view → reselect
+            reselect();
             return true;
         }
         if (mouseEvent->button() != Qt::LeftButton) {
