@@ -6,14 +6,18 @@
 #include <QRect>
 #include <QWidget>
 
-class QToolButton;
-
 class PinWindow : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit PinWindow(const QImage& image, QWidget* parent = nullptr);
+    explicit PinWindow(const QImage& image,
+                       const QRect& sourceGlobalRect,
+                       QWidget* parent = nullptr);
+
+    /// Pure calculation helper: bound a requested size to fit within available area
+    /// while preserving aspect ratio. Does not upscale sizes smaller than max.
+    static QSize boundedImageSize(const QSize& requested, const QRect& available);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -50,22 +54,17 @@ private:
         Resizing
     };
 
-    QSize initialWindowSize() const;
-    QSize boundedImageSize(const QSize& requested, const QRect& available) const;
     QRect availableGeometryFor(const QPoint& globalPos) const;
     QRect clampedVisibleGeometry(const QRect& geometry) const;
     ResizeEdge hitTestResizeEdge(const QPoint& localPos) const;
     QCursor cursorForResizeEdge(ResizeEdge edge) const;
     void updateHoverState(const QPoint& localPos);
-    void updateCloseButtonGeometry();
-    void updateCloseButtonVisibility();
     void resizeByMouseMove(const QPoint& globalPos);
     QRect aspectResizeGeometry(const QPoint& globalPos) const;
     QSize constrainedSize(QSize size, const QRect& available) const;
 
     QImage m_originalImage;
     QPixmap m_displayPixmap;
-    QToolButton* m_closeButton = nullptr;
     QPoint m_pressGlobalPos;
     QPoint m_initialWindowTopLeft;
     QRect m_initialGeometry;

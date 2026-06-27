@@ -12,7 +12,6 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScreen>
-#include <QToolButton>
 #include <QtMath>
 
 namespace
@@ -21,8 +20,6 @@ constexpr int kResizeHitWidth = 8;
 constexpr int kMinimumExtent = 120;
 constexpr qreal kMaximumScreenRatio = 0.9;
 constexpr int kVisibleMargin = 40;
-constexpr int kCloseButtonSize = 22;
-constexpr int kCloseButtonMargin = 5;
 
 QSize deviceIndependentImageSize(const QImage& image)
 {
@@ -34,9 +31,34 @@ QSize deviceIndependentImageSize(const QImage& image)
     return QSize(qMax(1, qRound(image.width() / dpr)),
                  qMax(1, qRound(image.height() / dpr)));
 }
+
+QSize constrainPinSize(QSize size, qreal aspectRatio, const QRect& available)
+{
+    if (size.isEmpty()) {
+        size = QSize(kMinimumExtent, qRound(kMinimumExtent / aspectRatio));
+    }
+
+    int minWidth = kMinimumExtent;
+    int minHeight = qRound(kMinimumExtent / aspectRatio);
+    if (aspectRatio < 1.0) {
+        minHeight = kMinimumExtent;
+        minWidth = qRound(kMinimumExtent * aspectRatio);
+    }
+
+    if (size.width() < minWidth || size.height() < minHeight) {
+        size = QSize(minWidth, minHeight);
+    }
+
+    const QSize maxSize(qMax(1, qFloor(available.width() * kMaximumScreenRatio)),
+                        qMax(1, qFloor(available.height() * kMaximumScreenRatio)));
+    if (size.width() > maxSize.width() || size.height() > maxSize.height()) {
+        size.scale(maxSize, Qt::KeepAspectRatio);
+    }
+    return size.expandedTo(QSize(1, 1));
+}
 }
 
-PinWindow::PinWindow(const QImage& image, QWidget* parent)
+PinWindow::PinWindow(const QImage& image, const QRect& sourceGlobalRect, QWidget* parent)
     : QWidget(nullptr)
     , m_originalImage(image)
 {
@@ -52,25 +74,11 @@ PinWindow::PinWindow(const QImage& image, QWidget* parent)
         ? qreal(imageSize.width()) / qreal(imageSize.height())
         : 1.0;
 
-    resize(initialWindowSize());
+    const QRect available = availableGeometryFor(sourceGlobalRect.center());
+    resize(boundedImageSize(deviceIndependentImageSize(m_originalImage), available));
 
-    m_closeButton = new QToolButton(this);
-    m_closeButton->setText(QStringLiteral("x"));
-    m_closeButton->setToolTip(QStringLiteral("Close pin"));
-    m_closeButton->setAutoRaise(true);
-    m_closeButton->setCursor(Qt::ArrowCursor);
-    m_closeButton->setStyleSheet(QStringLiteral(
-        "QToolButton {"
-        "  background: rgba(32, 42, 54, 185);"
-        "  border: 1px solid rgba(255, 255, 255, 155);"
-        "  border-radius: 11px;"
-        "  color: white;"
-        "  font: 700 13px Arial;"
-        "}"
-        "QToolButton:hover { background: rgba(224, 54, 54, 220); }"));
-    m_closeButton->hide();
-    connect(m_closeButton, &QToolButton::clicked, this, &PinWindow::close);
-    updateCloseButtonGeometry();
+    const QRect initialGeometry(sourceGlobalRect.topLeft(), size());
+    move(clampedVisibleGeometry(initialGeometry).topLeft());
 
     auto* shadow = new QGraphicsDropShadowEffect(this);
     shadow->setBlurRadius(14.0);
@@ -79,13 +87,7 @@ PinWindow::PinWindow(const QImage& image, QWidget* parent)
     setGraphicsEffect(shadow);
 }
 
-QSize PinWindow::initialWindowSize() const
-{
-    const QRect available = availableGeometryFor(QCursor::pos());
-    return boundedImageSize(deviceIndependentImageSize(m_originalImage), available);
-}
-
-QSize PinWindow::boundedImageSize(const QSize& requested, const QRect& available) const
+QSize PinWindow::boundedImageSize(const QSize& requested, const QRect& available)
 {
     if (requested.isEmpty() || available.isEmpty()) {
         return QSize(kMinimumExtent, kMinimumExtent);
@@ -194,27 +196,6 @@ void PinWindow::updateHoverState(const QPoint& localPos)
     setCursor(cursorForResizeEdge(m_hoverResizeEdge));
 }
 
-void PinWindow::updateCloseButtonGeometry()
-{
-    if (m_closeButton == nullptr) {
-        return;
-    }
-
-    m_closeButton->setGeometry(width() - kCloseButtonSize - kCloseButtonMargin,
-                               kCloseButtonMargin,
-                               kCloseButtonSize,
-                               kCloseButtonSize);
-}
-
-void PinWindow::updateCloseButtonVisibility()
-{
-    if (m_closeButton == nullptr) {
-        return;
-    }
-
-    m_closeButton->setVisible(m_hovered || hasFocus());
-}
-
 void PinWindow::resizeByMouseMove(const QPoint& globalPos)
 {
     setGeometry(aspectResizeGeometry(globalPos));
@@ -289,28 +270,7 @@ QRect PinWindow::aspectResizeGeometry(const QPoint& globalPos) const
 
 QSize PinWindow::constrainedSize(QSize size, const QRect& available) const
 {
-    if (size.isEmpty()) {
-        size = QSize(kMinimumExtent, qRound(kMinimumExtent / m_aspectRatio));
-    }
-
-    const QSize maxSize(qMax(1, qFloor(available.width() * kMaximumScreenRatio)),
-                        qMax(1, qFloor(available.height() * kMaximumScreenRatio)));
-    size.scale(maxSize, Qt::KeepAspectRatio);
-
-    int minWidth = kMinimumExtent;
-    int minHeight = qRound(kMinimumExtent / m_aspectRatio);
-    if (m_aspectRatio < 1.0) {
-        minHeight = kMinimumExtent;
-        minWidth = qRound(kMinimumExtent * m_aspectRatio);
-    }
-
-    if (size.width() < minWidth || size.height() < minHeight) {
-        size = QSize(minWidth, minHeight);
-    }
-    if (size.width() > maxSize.width() || size.height() > maxSize.height()) {
-        size.scale(maxSize, Qt::KeepAspectRatio);
-    }
-    return size.expandedTo(QSize(1, 1));
+    return constrainPinSize(size, m_aspectRatio, available);
 }
 
 void PinWindow::paintEvent(QPaintEvent* event)
@@ -338,14 +298,12 @@ void PinWindow::paintEvent(QPaintEvent* event)
 void PinWindow::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
-    updateCloseButtonGeometry();
 }
 
 void PinWindow::enterEvent(QEnterEvent* event)
 {
     m_hovered = true;
     updateHoverState(event->position().toPoint());
-    updateCloseButtonVisibility();
     update();
 }
 
@@ -357,21 +315,18 @@ void PinWindow::leaveEvent(QEvent* event)
         m_hoverResizeEdge = ResizeEdge::None;
         setCursor(Qt::ArrowCursor);
     }
-    updateCloseButtonVisibility();
     update();
 }
 
 void PinWindow::focusInEvent(QFocusEvent* event)
 {
     QWidget::focusInEvent(event);
-    updateCloseButtonVisibility();
     update();
 }
 
 void PinWindow::focusOutEvent(QFocusEvent* event)
 {
     QWidget::focusOutEvent(event);
-    updateCloseButtonVisibility();
     update();
 }
 
@@ -383,8 +338,8 @@ void PinWindow::mousePressEvent(QMouseEvent* event)
     }
 
     m_pressGlobalPos = event->globalPosition().toPoint();
-    m_initialWindowTopLeft = frameGeometry().topLeft();
     m_initialGeometry = geometry();
+    m_initialWindowTopLeft = m_initialGeometry.topLeft();
     m_activeResizeEdge = hitTestResizeEdge(event->position().toPoint());
     if (m_activeResizeEdge != ResizeEdge::None) {
         m_dragState = DragState::Resizing;

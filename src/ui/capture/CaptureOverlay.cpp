@@ -1280,8 +1280,11 @@ void CaptureOverlay::pinAndClose()
         return;
     }
 
-    auto* pinWindow = new PinWindow(result);
+    const QRect selectionGlobal = overlayToGlobalLogical(m_selectionImageRect);
+
+    auto* pinWindow = new PinWindow(result, selectionGlobal);
     pinWindow->show();
+    pinWindow->raise();
 
     m_state = CaptureState::Finished;
     close();
