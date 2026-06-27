@@ -70,8 +70,14 @@ private:
     /// Logical image rect → widget rect (identity on this overlay).
     QRect imageToWidgetRect(const QRect& imageRect) const;
 
-    /// The effective DPR for a logical rectangle: max DPR of intersecting screens.
-    qreal effectiveDevicePixelRatio(const QRect& logicalRect) const;
+    /// Overlay-local logical rect → virtual-desktop global logical rect.
+    QRect overlayToGlobalLogical(const QRect& localRect) const;
+
+    /// Virtual-desktop global logical rect → overlay-local logical rect.
+    QRect globalToOverlayLogical(const QRect& globalRect) const;
+
+    /// The effective DPR for a global logical rectangle: max DPR of intersecting screens.
+    qreal effectiveDevicePixelRatio(const QRect& globalLogicalRect) const;
 
     // ----- selection ----------------------------------------------------------
     QRect normalizedImageSelection() const;
@@ -90,7 +96,6 @@ private:
 
     // ----- painting -----------------------------------------------------------
     void paintBackground(QPainter& painter) const;
-    void paintSelection(QPainter& painter, const QRect& selection) const;
     void paintAnnotations(QPainter& painter,
                           const QRect& widgetSelection,
                           bool includePreview) const;

@@ -84,7 +84,9 @@ void CaptureOverlay::enterEditing(const QRect& imageRect)
 {
     const QRect bounds = QRect(QPoint(0, 0), m_virtualGeometry.size());
     const QRect bounded = imageRect.normalized().intersected(bounds);
-    if (bounded.width() < kMinimumSelectionSize || bounded.height() < kMinimumSelectionSize) {
+    if (m_captureResult.screens().isEmpty()
+        || bounded.width() < kMinimumSelectionSize
+        || bounded.height() < kMinimumSelectionSize) {
         return;
     }
 
@@ -147,13 +149,13 @@ QImage CaptureOverlay::renderResultImage() const
         return {};
     }
 
-    const qreal effectiveDpr = effectiveDevicePixelRatio(m_selectionImageRect);
+    const QRect selectionGlobal = overlayToGlobalLogical(m_selectionImageRect);
+    const qreal effectiveDpr = effectiveDevicePixelRatio(selectionGlobal);
     const int physW = qRound(m_selectionImageRect.width() * effectiveDpr);
     const int physH = qRound(m_selectionImageRect.height() * effectiveDpr);
 
     QImage result(physW, physH, QImage::Format_ARGB32);
     result.fill(Qt::transparent);
-    result.setDevicePixelRatio(effectiveDpr);
 
     QPainter painter(&result);
     painter.setRenderHint(QPainter::Antialiasing, true);
@@ -172,21 +174,24 @@ QImage CaptureOverlay::renderResultImage() const
     // export with mixed DPR prioritises the highest DPR so most pixels
     // stay 1:1; the lower-DPR fragment is upscaled once.
     for (const CapturedScreen &screen : m_captureResult.screens()) {
-        const QRect overlap = m_selectionImageRect.intersected(screen.logicalGeometry);
-        if (overlap.isEmpty()) {
+        const QRect overlapGlobal = selectionGlobal.intersected(screen.logicalGeometry);
+        if (overlapGlobal.isEmpty()) {
             continue;
         }
 
-        const QRect physicalSrc = m_captureResult.logicalToPhysical(screen, overlap);
+        const QRect physicalSrc = m_captureResult.logicalToPhysical(screen, overlapGlobal);
         if (physicalSrc.isEmpty()) {
             continue;
         }
 
         // Target rect in selection-relative logical coordinates.
-        const QPointF targetTopLeft(overlap.topLeft() - m_selectionImageRect.topLeft());
-        const QRectF targetRect(targetTopLeft, QSizeF(overlap.size()));
+        const QRect overlapLocal = globalToOverlayLogical(overlapGlobal);
+        const QPointF targetTopLeft(overlapLocal.topLeft() - m_selectionImageRect.topLeft());
+        const QRectF targetRect(targetTopLeft, QSizeF(overlapLocal.size()));
 
-        painter.drawImage(targetRect, screen.image, physicalSrc);
+        QImage sourceImage = screen.image;
+        sourceImage.setDevicePixelRatio(1.0);
+        painter.drawImage(targetRect, sourceImage, physicalSrc);
     }
 
     // Paint annotations in selection-relative logical coordinates.
@@ -199,6 +204,7 @@ QImage CaptureOverlay::renderResultImage() const
     }
 
     painter.end();
+    result.setDevicePixelRatio(effectiveDpr);
     return result;
 }
 
@@ -225,7 +231,11 @@ void CaptureOverlay::paintEvent(QPaintEvent *event)
 
     // … then undim the selection area by redrawing it at full brightness.
     const QRect widgetSelection = imageToWidgetRect(selection);
-    paintSelection(painter, selection);
+    painter.save();
+    painter.setClipRect(widgetSelection);
+    paintBackground(painter);
+    painter.restore();
+
     paintAnnotations(painter, widgetSelection, true);
     paintSelectionChrome(painter, widgetSelection, selection);
 }
@@ -240,28 +250,6 @@ void CaptureOverlay::paintBackground(QPainter &painter) const
         const QRect widgetRect(screen.logicalGeometry.topLeft() - m_virtualGeometry.topLeft(),
                                screen.logicalGeometry.size());
         painter.drawImage(widgetRect, screen.image);
-    }
-}
-
-void CaptureOverlay::paintSelection(QPainter &painter, const QRect &selection) const
-{
-    // Redraw each screen's portion of the selection at full brightness.
-    for (const CapturedScreen &screen : m_captureResult.screens()) {
-        const QRect overlap = selection.intersected(screen.logicalGeometry);
-        if (overlap.isEmpty()) {
-            continue;
-        }
-
-        const QRect physicalSrc = m_captureResult.logicalToPhysical(screen, overlap);
-        if (physicalSrc.isEmpty()) {
-            continue;
-        }
-
-        // Map the logical overlap to widget coordinates.
-        const QRect widgetTarget(overlap.topLeft() - m_virtualGeometry.topLeft(),
-                                 overlap.size());
-
-        painter.drawImage(widgetTarget, screen.image, physicalSrc);
     }
 }
 
@@ -377,11 +365,21 @@ QRect CaptureOverlay::imageToWidgetRect(const QRect &imageRect) const
     return imageRect;
 }
 
-qreal CaptureOverlay::effectiveDevicePixelRatio(const QRect &logicalRect) const
+QRect CaptureOverlay::overlayToGlobalLogical(const QRect &localRect) const
+{
+    return localRect.translated(m_virtualGeometry.topLeft());
+}
+
+QRect CaptureOverlay::globalToOverlayLogical(const QRect &globalRect) const
+{
+    return globalRect.translated(-m_virtualGeometry.topLeft());
+}
+
+qreal CaptureOverlay::effectiveDevicePixelRatio(const QRect &globalLogicalRect) const
 {
     qreal dpr = 1.0;
     for (const CapturedScreen &screen : m_captureResult.screens()) {
-        if (screen.logicalGeometry.intersects(logicalRect)) {
+        if (screen.logicalGeometry.intersects(globalLogicalRect)) {
             dpr = qMax(dpr, screen.devicePixelRatio);
         }
     }

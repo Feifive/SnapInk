@@ -57,6 +57,7 @@ private slots:
     void singleScreenExportAtDpr2_0DoublesPixels();
     void selectionClippedToScreenBoundary();
     void multiScreenCrossDprSingleScreenRegionIsLossless();
+    void exportSelectionUsesGlobalLogicalCoordinatesWhenScreenIsLeftAndAbove();
     void emptyCaptureResultIsSafe();
     void captureResultLogicalToPhysicalDpr1_0();
     void captureResultLogicalToPhysicalDpr1_5();
@@ -241,6 +242,21 @@ void CaptureOverlayTests::multiScreenCrossDprSingleScreenRegionIsLossless()
     QCOMPARE(result.size(), QSize(100, 100));
     QCOMPARE(result.devicePixelRatio(), 1.0);
     QCOMPARE(result.pixelColor(50, 50), QColor(Qt::green));
+}
+
+void CaptureOverlayTests::exportSelectionUsesGlobalLogicalCoordinatesWhenScreenIsLeftAndAbove()
+{
+    auto screen = makeTestScreen(200, 100, 1.0, {-100, -50});
+    screen.image.setPixelColor(10, 20, Qt::red);
+    screen.image.setPixelColor(110, 70, Qt::blue);
+
+    CaptureResult cr({screen});
+    CaptureOverlay overlay(std::move(cr), QRect(-100, -50, 200, 100));
+    overlay.enterEditing(QRect(10, 20, 30, 20));
+
+    const QImage result = overlay.renderResultImage();
+    QCOMPARE(result.size(), QSize(30, 20));
+    QCOMPARE(result.pixelColor(0, 0), QColor(Qt::red));
 }
 
 void CaptureOverlayTests::emptyCaptureResultIsSafe()
