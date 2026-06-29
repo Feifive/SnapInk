@@ -1,4 +1,5 @@
 #include "../src/core/capture/CapturedScreen.h"
+#include "../src/app/mainwindow.h"
 #include "../src/ui/capture/CaptureAnnotation.h"
 #include "../src/ui/capture/CaptureOverlay.h"
 #include "../src/ui/pin/PinWindow.h"
@@ -11,8 +12,11 @@
 #include <QGraphicsPixmapItem>
 #include <QGraphicsScene>
 #include <QGraphicsView>
+#include <QMenu>
 #include <QPointer>
 #include <QScreen>
+#include <QSignalSpy>
+#include <QSystemTrayIcon>
 #include <QTest>
 #include <QTextDocument>
 #include <QTextOption>
@@ -141,6 +145,12 @@ private slots:
     void expandSelectionPreservesAnnotations();
     void rightClickInEditingEntersReselect();
     void rightClickBeforeSelectionCancels();
+
+    // App shell / tray tests
+    void mainWindowCreatesTrayMenuWithoutRegisteringHotkeysInTests();
+    void mainWindowTrayIconUsesPlatformIcon();
+    void trayActivationDoesNotManuallyPopupDuplicateMenu();
+    void mainWindowCloseHidesInsteadOfDestroying();
 };
 
 // ---------------------------------------------------------------------------
@@ -1116,6 +1126,87 @@ void CaptureOverlayTests::rightClickBeforeSelectionCancels()
 
     // Overlay should be closed/canceled
     QTRY_VERIFY(guard.isNull());
+}
+
+void CaptureOverlayTests::mainWindowCreatesTrayMenuWithoutRegisteringHotkeysInTests()
+{
+    MainWindow window(nullptr, false);
+
+    auto* trayMenu = window.findChild<QMenu*>("SnapInkTrayMenu");
+    QVERIFY(trayMenu != nullptr);
+
+#ifndef Q_OS_MACOS
+    auto* trayIcon = window.findChild<QSystemTrayIcon*>("SnapInkTrayIcon");
+    QVERIFY(trayIcon != nullptr);
+    QVERIFY(trayIcon->contextMenu() != nullptr);
+    QCOMPARE(trayIcon->contextMenu(), trayMenu);
+#endif
+
+    QStringList actionTexts;
+    for (QAction* action : trayMenu->actions()) {
+        if (!action->isSeparator()) {
+            actionTexts.append(action->text());
+        }
+    }
+
+    QCOMPARE(actionTexts,
+             QStringList({QStringLiteral("Region Capture"),
+                          QStringLiteral("Full Screen Capture"),
+                          QStringLiteral("Show Main Window"),
+                          QStringLiteral("Quit")}));
+}
+
+void CaptureOverlayTests::mainWindowTrayIconUsesPlatformIcon()
+{
+    MainWindow window(nullptr, false);
+
+#ifdef Q_OS_MACOS
+    QCOMPARE(window.property("SnapInkTrayIconSource").toString(), QStringLiteral("trayTemplate.png"));
+#else
+    auto* trayIcon = window.findChild<QSystemTrayIcon*>("SnapInkTrayIcon");
+    QVERIFY(trayIcon != nullptr);
+    QVERIFY(!trayIcon->icon().isNull());
+    QCOMPARE(trayIcon->property("SnapInkIconSource").toString(), QStringLiteral("app.icns"));
+#endif
+}
+
+void CaptureOverlayTests::trayActivationDoesNotManuallyPopupDuplicateMenu()
+{
+    MainWindow window(nullptr, false);
+
+    auto* trayIcon = window.findChild<QSystemTrayIcon*>("SnapInkTrayIcon");
+#ifdef Q_OS_MACOS
+    QVERIFY(trayIcon == nullptr);
+#else
+    QVERIFY(trayIcon != nullptr);
+    QVERIFY(trayIcon->contextMenu() != nullptr);
+
+    QMetaObject::invokeMethod(trayIcon,
+                              "activated",
+                              Q_ARG(QSystemTrayIcon::ActivationReason, QSystemTrayIcon::Trigger));
+    QCoreApplication::processEvents();
+
+    QVERIFY(!trayIcon->contextMenu()->isVisible());
+#endif
+}
+
+void CaptureOverlayTests::mainWindowCloseHidesInsteadOfDestroying()
+{
+    auto* window = new MainWindow(nullptr, false);
+    QPointer<MainWindow> guard(window);
+    QSignalSpy destroyedSpy(window, &QObject::destroyed);
+
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+
+    window->close();
+    QCoreApplication::processEvents();
+
+    QVERIFY(!guard.isNull());
+    QCOMPARE(destroyedSpy.count(), 0);
+    QVERIFY(!window->isVisible());
+
+    delete window;
 }
 
 // ---------------------------------------------------------------------------

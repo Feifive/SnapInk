@@ -5,6 +5,9 @@
 #include <QPointer>
 
 class CaptureOverlay;
+class QCloseEvent;
+class QMenu;
+class QSystemTrayIcon;
 class Hotkey;
 class QString;
 
@@ -13,19 +16,29 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    MainWindow(QWidget *parent = nullptr);
+    MainWindow(QWidget *parent = nullptr, bool registerGlobalHotkeys = true);
     ~MainWindow();
 
+protected:
+    void closeEvent(QCloseEvent* event) override;
+
 private:
+    void setupCentralWidget();
+    void setupTrayIcon();
     void registerHotkeys();
     void handleHotkeyRegistrationFailure(const QString& shortcut, const QString& reason);
     void startRegionCapture();
     void startFullScreenCapture();
     void showOverlay(CaptureOverlay* overlay);
     void showCaptureUnavailable();
+    void showMainWindow();
+    void quitApplication();
 
+    QSystemTrayIcon* m_trayIcon = nullptr;
+    QMenu* m_trayMenu = nullptr;
     Hotkey* m_regionHotkey = nullptr;
     Hotkey* m_fullScreenHotkey = nullptr;
     QPointer<CaptureOverlay> m_activeOverlay;
+    bool m_isQuitting = false;
 };
 #endif // MAINWINDOW_H

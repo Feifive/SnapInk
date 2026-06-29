@@ -31,8 +31,15 @@ set(SNAPINK_MACOS_SOURCES)
 if(APPLE)
     enable_language(OBJCXX)
     set(SNAPINK_MACOS_SOURCES
+        icons/app.icns
+        icons/trayTemplate.png
+        src/platform/macos/MacTrayIconHelper.h
+        src/platform/macos/MacTrayIconHelper.mm
         src/ui/pin/MacWindowHelper.h
         src/ui/pin/MacWindowHelper.mm
+    )
+    set_source_files_properties(icons/app.icns icons/trayTemplate.png PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources
     )
 endif()
 
@@ -58,6 +65,13 @@ target_link_libraries(SnapInk
 )
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
+
+if(APPLE)
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        MACOSX_BUNDLE_ICON_FILE app.icns
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/cmake/MacOSXBundleInfo.plist.in"
+    )
+endif()
 
 if(WIN32)
     target_sources(${PROJECT_NAME} PRIVATE
@@ -91,6 +105,12 @@ enable_testing()
 
 qt_add_executable(SnapInkTests
     tests/capture_overlay_tests.cpp
+    src/app/mainwindow.cpp
+    src/app/mainwindow.h
+    src/core/hotkey/Hotkey.cpp
+    src/core/hotkey/Hotkey.h
+    src/core/hotkey/Hotkey_p.h
+    src/core/hotkey/HotkeyPlatform.h
     ${SNAPINK_CORE_SOURCES}
     ${SNAPINK_CAPTURE_SOURCES}
     ${SNAPINK_MACOS_SOURCES}
@@ -109,7 +129,14 @@ target_compile_features(SnapInkTests PRIVATE cxx_std_20)
 add_test(NAME SnapInkTests COMMAND SnapInkTests)
 
 if(APPLE)
-    target_link_libraries(SnapInkTests PRIVATE "-framework AppKit")
+    target_sources(SnapInkTests PRIVATE
+        src/core/hotkey/HotkeyPlatform_mac.cpp
+    )
+
+    target_link_libraries(SnapInkTests PRIVATE
+        ${CARBON_LIBRARY}
+        "-framework AppKit"
+    )
 
     qt_add_executable(HotkeyMacTests
         tests/hotkey_mac_tests.cpp
