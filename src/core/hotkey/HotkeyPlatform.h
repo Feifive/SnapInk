@@ -24,6 +24,11 @@ public:
                            void* message,
                            qintptr* result) override;
 
+    /// Called by platform backends to dispatch a hotkey activation when the
+    /// native id is known (e.g. from a Carbon event handler callback on
+    /// macOS). Returns true if a Hotkey was found and activated.
+    bool dispatchActivationByNativeId(int nativeId);
+
 private:
     Q_DISABLE_COPY_MOVE(HotkeyPlatform)
 

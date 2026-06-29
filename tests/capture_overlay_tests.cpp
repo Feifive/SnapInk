@@ -2,6 +2,9 @@
 #include "../src/ui/capture/CaptureAnnotation.h"
 #include "../src/ui/capture/CaptureOverlay.h"
 #include "../src/ui/pin/PinWindow.h"
+#ifdef Q_OS_MACOS
+#include "../src/ui/pin/MacWindowHelper.h"
+#endif
 
 #include <QImage>
 #include <QApplication>
@@ -100,6 +103,9 @@ private slots:
     void selectToolWheelResizesByOnePixel();
     void annotationToolDoesNotMoveSelection();
     void pinWindowUsesToolTopmostFramelessFlagsAndDeletesOnClose();
+#ifdef Q_OS_MACOS
+    void macWindowHelperIgnoresWidgetsWithoutNativeWindows();
+#endif
     void pinWindowScalesInitialGeometryToAvailableScreen();
     void pinToolbarCreatesIndependentPinWindowAndClosesOverlay();
     void pinWindowInitialPositionUsesSourceGlobalRect();
@@ -420,6 +426,17 @@ void CaptureOverlayTests::pinWindowUsesToolTopmostFramelessFlagsAndDeletesOnClos
     QTest::keyClick(window, Qt::Key_Escape);
     QTRY_VERIFY(guard.isNull());
 }
+
+#ifdef Q_OS_MACOS
+void CaptureOverlayTests::macWindowHelperIgnoresWidgetsWithoutNativeWindows()
+{
+    MacWindowHelper::configureOverlayWindow(nullptr);
+
+    QWidget widget;
+    QVERIFY(widget.windowHandle() == nullptr);
+    MacWindowHelper::configureOverlayWindow(&widget);
+}
+#endif
 
 void CaptureOverlayTests::pinWindowScalesInitialGeometryToAvailableScreen()
 {

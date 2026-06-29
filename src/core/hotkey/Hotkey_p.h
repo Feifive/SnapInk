@@ -14,6 +14,9 @@ public:
     Hotkey* q = nullptr;
     QKeySequence shortcut;
     bool registered = false;
+    // Platform-specific opaque handle. macOS stores EventHotKeyRef here so the
+    // platform backend can unregister it without an extra side map.
+    void* platformHandle = nullptr;
 };
 
 #endif // HOTKEY_P_H

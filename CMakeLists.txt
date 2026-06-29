@@ -27,6 +27,15 @@ set(SNAPINK_CAPTURE_SOURCES
     src/ui/pin/PinWindow.h
 )
 
+set(SNAPINK_MACOS_SOURCES)
+if(APPLE)
+    enable_language(OBJCXX)
+    set(SNAPINK_MACOS_SOURCES
+        src/ui/pin/MacWindowHelper.h
+        src/ui/pin/MacWindowHelper.mm
+    )
+endif()
+
 qt_add_executable(SnapInk
     WIN32 MACOSX_BUNDLE
     main.cpp
@@ -38,6 +47,7 @@ qt_add_executable(SnapInk
     src/core/hotkey/HotkeyPlatform.h
     ${SNAPINK_CORE_SOURCES}
     ${SNAPINK_CAPTURE_SOURCES}
+    ${SNAPINK_MACOS_SOURCES}
 )
 
 target_link_libraries(SnapInk
@@ -65,6 +75,12 @@ elseif(APPLE)
     target_sources(${PROJECT_NAME} PRIVATE
         src/core/hotkey/HotkeyPlatform_mac.cpp
     )
+
+    find_library(CARBON_LIBRARY Carbon REQUIRED)
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        ${CARBON_LIBRARY}
+        "-framework AppKit"
+    )
 elseif(UNIX)
     target_sources(${PROJECT_NAME} PRIVATE
         src/core/hotkey/HotkeyPlatform_linux.cpp
@@ -77,6 +93,7 @@ qt_add_executable(SnapInkTests
     tests/capture_overlay_tests.cpp
     ${SNAPINK_CORE_SOURCES}
     ${SNAPINK_CAPTURE_SOURCES}
+    ${SNAPINK_MACOS_SOURCES}
 )
 
 target_link_libraries(SnapInkTests
@@ -90,6 +107,31 @@ target_link_libraries(SnapInkTests
 target_compile_features(SnapInkTests PRIVATE cxx_std_20)
 
 add_test(NAME SnapInkTests COMMAND SnapInkTests)
+
+if(APPLE)
+    target_link_libraries(SnapInkTests PRIVATE "-framework AppKit")
+
+    qt_add_executable(HotkeyMacTests
+        tests/hotkey_mac_tests.cpp
+        src/core/hotkey/Hotkey.cpp
+        src/core/hotkey/Hotkey.h
+        src/core/hotkey/Hotkey_p.h
+        src/core/hotkey/HotkeyPlatform.h
+        src/core/hotkey/HotkeyPlatform_mac.cpp
+    )
+
+    target_link_libraries(HotkeyMacTests
+        PRIVATE
+            Qt::Core
+            Qt::Gui
+            Qt::Test
+            ${CARBON_LIBRARY}
+    )
+
+    target_compile_features(HotkeyMacTests PRIVATE cxx_std_20)
+
+    add_test(NAME HotkeyMacTests COMMAND HotkeyMacTests)
+endif()
 
 include(GNUInstallDirs)
 

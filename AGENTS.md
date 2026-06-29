@@ -33,6 +33,19 @@ Main technologies:
   - Clipboard image write support.
 - `src/core/hotkey/`
   - Cross-platform hotkey abstraction plus platform-specific backends.
+  - `Hotkey.*` is the public QObject API; `Hotkey_p.h` holds per-instance
+    state including a `void* platformHandle` used by backends to keep their
+    native handle next to the public object (e.g. `EventHotKeyRef` on macOS).
+  - `HotkeyPlatform_*.{cpp}` provide the per-OS backend. The Windows backend
+    uses Win32 `RegisterHotKey` and dispatches `WM_HOTKEY` through Qt's native
+    event filter. The macOS backend uses Carbon `RegisterEventHotKey` /
+    `UnregisterEventHotKey` and dispatches activations through a Carbon
+    `EventHandlerRef` callback installed on `GetApplicationEventTarget()`. The
+    macOS backend does NOT need Accessibility permission.
+  - On macOS, Qt::Key -> virtual key code is not an ASCII arithmetic mapping:
+    macOS virtual codes follow the physical QWERTY layout, so the conversion
+    uses an explicit table in the `SnapInk::HotkeyMac` namespace inside
+    `HotkeyPlatform_mac.cpp`. That namespace is reused by `HotkeyMacTests`.
 - `src/ui/capture/`
   - Screenshot selection and annotation UI.
   - `CaptureOverlay.*` owns the full-screen overlay, selection chrome, embedded
@@ -43,6 +56,9 @@ Main technologies:
   - `CaptureTool.h` defines available annotation tools.
 - `tests/`
   - Qt Test based automated tests. The main test file is `tests/capture_overlay_tests.cpp`.
+  - `tests/hotkey_mac_tests.cpp` covers macOS-only key/modifier conversion
+    helpers; it is built as the separate `HotkeyMacTests` target only on
+    `APPLE`.
 - `docs/superpowers/`
   - Planning/spec notes from previous development work.
 - `build/`
@@ -67,6 +83,9 @@ CMake defines two primary targets:
   - Main GUI application.
 - `SnapInkTests`
   - Qt Test executable registered with CTest as `SnapInkTests`.
+- `HotkeyMacTests` (macOS only)
+  - Qt Test executable registered with CTest as `HotkeyMacTests`. Covers the
+    pure key/modifier conversion helpers used by the macOS hotkey backend.
 
 Typical build commands, from the repository root:
 
@@ -209,9 +228,16 @@ From the repository root:
 
 ```sh
 cmake --build <build-dir> --target SnapInkTests
+cmake --build <build-dir> --target HotkeyMacTests   # macOS only
 QT_QPA_PLATFORM=offscreen ctest --test-dir <build-dir> --output-on-failure
 cmake --build <build-dir> --target SnapInk
 ```
+
+The macOS hotkey unit tests in `HotkeyMacTests` only exercise the pure
+`SnapInk::HotkeyMac` conversion helpers — they do not register any
+system-wide hotkey, so they are safe under `QT_QPA_PLATFORM=offscreen`. The
+integration verification (pressing `Control+Option+A` and observing the
+overlay open) is manual and must be performed with a real display session.
 
 If the final app build fails because the executable cannot be opened, close or stop
 the running `SnapInk` process and rerun the app build.

@@ -42,6 +42,7 @@ public:
 
 protected:
     void paintEvent(QPaintEvent* event) override;
+    void showEvent(QShowEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void enterEvent(QEnterEvent* event) override;
     void leaveEvent(QEvent* event) override;
@@ -95,6 +96,7 @@ private:
     qreal m_aspectRatio = 1.0;
     bool m_hovered = false;
     bool m_closing = false;
+    bool m_nativeOverlayConfigured = false;
 
     // Content widget for rendering the image with shadow effect
     PinContentWidget* m_contentWidget = nullptr;

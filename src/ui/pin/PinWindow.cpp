@@ -1,5 +1,9 @@
 #include "PinWindow.h"
 
+#ifdef Q_OS_MACOS
+#include "MacWindowHelper.h"
+#endif
+
 #include <QApplication>
 #include <QAction>
 #include <QCloseEvent>
@@ -13,6 +17,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QScreen>
+#include <QShowEvent>
 #include <QtMath>
 
 // ============================================================================
@@ -25,7 +30,6 @@ PinContentWidget::PinContentWidget(const QImage& image, qreal aspectRatio, QWidg
     , m_aspectRatio(aspectRatio)
 {
     setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    setAttribute(Qt::WA_NoSystemBackground, true);
     setAutoFillBackground(false);
 }
 
@@ -81,7 +85,7 @@ void PinContentWidget::paintEvent(QPaintEvent* event)
 
     constexpr qreal kCornerRadius = 0.0;
 
-    const QRectF contentRect = rect().adjusted(0.5, 0.5, -0.5, -0.5);
+    const QRectF contentRect = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
 
     QPainterPath path;
     path.addRoundedRect(contentRect, kCornerRadius, kCornerRadius);
@@ -158,7 +162,10 @@ PinWindow::PinWindow(const QImage& image, const QRect& sourceGlobalRect, QWidget
     Q_UNUSED(parent)
 
     // Set up transparent window for shadow effect
-    setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::NoDropShadowWindowHint);
+#ifdef Q_OS_MACOS
+    setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
+#endif
     setAttribute(Qt::WA_TranslucentBackground, true);
     setAutoFillBackground(false);
     setMouseTracking(true);
@@ -396,6 +403,18 @@ void PinWindow::paintEvent(QPaintEvent* event)
     Q_UNUSED(event)
     // Content is rendered by m_contentWidget, no need to paint here
     // The window background is transparent to allow shadow effect
+}
+
+void PinWindow::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+
+#ifdef Q_OS_MACOS
+    if (!m_nativeOverlayConfigured) {
+        MacWindowHelper::configureOverlayWindow(this);
+        m_nativeOverlayConfigured = true;
+    }
+#endif
 }
 
 void PinWindow::resizeEvent(QResizeEvent* event)
