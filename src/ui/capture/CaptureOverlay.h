@@ -4,6 +4,7 @@
 #include "CaptureAnnotation.h"
 #include "CaptureSelectionModel.h"
 #include "CaptureTool.h"
+#include "../../core/capture/CaptureImageComposer.h"
 #include "../../core/capture/CapturedScreen.h"
 
 #include <QCursor>
@@ -79,15 +80,6 @@ private:
     /// Logical image rect → widget rect (identity on this overlay).
     QRect imageToWidgetRect(const QRect& imageRect) const;
 
-    /// Overlay-local logical rect → virtual-desktop global logical rect.
-    QRect overlayToGlobalLogical(const QRect& localRect) const;
-
-    /// Virtual-desktop global logical rect → overlay-local logical rect.
-    QRect globalToOverlayLogical(const QRect& globalRect) const;
-
-    /// The effective DPR for a global logical rectangle: max DPR of intersecting screens.
-    qreal effectiveDevicePixelRatio(const QRect& globalLogicalRect) const;
-
     // ----- selection ----------------------------------------------------------
     QRect normalizedImageSelection() const;
     bool isInsideSelection(const QPoint& pos) const;
@@ -113,7 +105,6 @@ private:
     // ----- annotation drawing -------------------------------------------------
     void setupAnnotationView();
     void prepareAnnotationScene();
-    QPixmap selectionPixmap() const;
     void syncAnnotationViewGeometry();
     void beginAnnotation(const QPointF& selectionPos);
     void updateAnnotation(const QPointF& selectionPos);
@@ -147,6 +138,7 @@ private:
     CaptureResult m_captureResult;
     QRect m_virtualGeometry;
     CaptureSelectionModel m_selectionModel;
+    CaptureImageComposer m_imageComposer;
     CaptureState m_state = CaptureState::Selecting;
     QUndoStack m_undoStack;
     CaptureToolbar* m_toolbar = nullptr;

@@ -76,6 +76,7 @@ CaptureOverlay::CaptureOverlay(CaptureResult captureResult,
     , m_captureResult(std::move(captureResult))
     , m_virtualGeometry(virtualGeometry)
     , m_selectionModel(QRect(QPoint(0, 0), virtualGeometry.size()))
+    , m_imageComposer(m_captureResult, m_virtualGeometry)
     , m_toolbar(new CaptureToolbar(this))
     , m_selectionChromeLayer(new SelectionChromeLayer(this))
 {
@@ -190,17 +191,16 @@ QImage CaptureOverlay::renderResultImage() const
 
     const_cast<CaptureOverlay*>(this)->commitActiveTextEditing();
 
-    const QRect selectionGlobal = overlayToGlobalLogical(selection);
-    const qreal effectiveDpr = effectiveDevicePixelRatio(selectionGlobal);
-    const int physW = qRound(selection.width() * effectiveDpr);
-    const int physH = qRound(selection.height() * effectiveDpr);
+    QImage result = m_imageComposer.createTransparentCanvas(selection);
+    if (result.isNull()) {
+        return {};
+    }
 
-    QImage result(physW, physH, QImage::Format_ARGB32);
-    result.fill(Qt::transparent);
-
+    const qreal canvasDpr = result.devicePixelRatio();
+    result.setDevicePixelRatio(1.0);
     QPainter painter(&result);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.scale(effectiveDpr, effectiveDpr);
+    painter.scale(canvasDpr, canvasDpr);
 
     if (m_previewItem != nullptr && m_previewItem->scene() == m_annotationScene) {
         const_cast<QGraphicsScene*>(m_annotationScene)->removeItem(m_previewItem);
@@ -211,7 +211,7 @@ QImage CaptureOverlay::renderResultImage() const
     }
 
     painter.end();
-    result.setDevicePixelRatio(effectiveDpr);
+    result.setDevicePixelRatio(canvasDpr);
     return result;
 }
 
@@ -341,27 +341,6 @@ QPointF CaptureOverlay::widgetToSelection(const QPointF& widgetPos) const
 QRect CaptureOverlay::imageToWidgetRect(const QRect& imageRect) const
 {
     return imageRect;
-}
-
-QRect CaptureOverlay::overlayToGlobalLogical(const QRect& localRect) const
-{
-    return localRect.translated(m_virtualGeometry.topLeft());
-}
-
-QRect CaptureOverlay::globalToOverlayLogical(const QRect& globalRect) const
-{
-    return globalRect.translated(-m_virtualGeometry.topLeft());
-}
-
-qreal CaptureOverlay::effectiveDevicePixelRatio(const QRect& globalLogicalRect) const
-{
-    qreal dpr = 1.0;
-    for (const CapturedScreen& screen : m_captureResult.screens()) {
-        if (screen.logicalGeometry.intersects(globalLogicalRect)) {
-            dpr = qMax(dpr, screen.devicePixelRatio);
-        }
-    }
-    return dpr;
 }
 
 QRect CaptureOverlay::normalizedImageSelection() const
@@ -510,11 +489,13 @@ void CaptureOverlay::updateSelectionBackground()
         return;
     }
 
+    const QPixmap selectionPixmap =
+        m_imageComposer.composeSelectionPixmap(m_selectionModel.selectionRect());
     if (m_selectionPixmapItem == nullptr || m_selectionPixmapItem->scene() != m_annotationScene) {
-        m_selectionPixmapItem = m_annotationScene->addPixmap(selectionPixmap());
+        m_selectionPixmapItem = m_annotationScene->addPixmap(selectionPixmap);
         m_selectionPixmapItem->setZValue(-1000.0);
     } else {
-        m_selectionPixmapItem->setPixmap(selectionPixmap());
+        m_selectionPixmapItem->setPixmap(selectionPixmap);
     }
     m_selectionPixmapItem->setPos(0, 0);
 }
@@ -605,50 +586,13 @@ void CaptureOverlay::prepareAnnotationScene()
     m_undoStack.clear();
     m_annotationScene->clear();
     m_annotationScene->setSceneRect(selectionSceneRect());
-    m_selectionPixmapItem = m_annotationScene->addPixmap(selectionPixmap());
+    const QPixmap selectionPixmap =
+        m_imageComposer.composeSelectionPixmap(m_selectionModel.selectionRect());
+    m_selectionPixmapItem = m_annotationScene->addPixmap(selectionPixmap);
     m_selectionPixmapItem->setPos(0, 0);
     m_selectionPixmapItem->setZValue(-1000.0);
     m_previewItem = nullptr;
     m_activeTextItem = nullptr;
-}
-
-QPixmap CaptureOverlay::selectionPixmap() const
-{
-    const QRect selection = m_selectionModel.selectionRect();
-    const QRect selectionGlobal = overlayToGlobalLogical(selection);
-    const qreal effectiveDpr = effectiveDevicePixelRatio(selectionGlobal);
-    const int physW = qRound(selection.width() * effectiveDpr);
-    const int physH = qRound(selection.height() * effectiveDpr);
-
-    QImage image(physW, physH, QImage::Format_ARGB32);
-    image.fill(Qt::transparent);
-
-    QPainter painter(&image);
-    painter.scale(effectiveDpr, effectiveDpr);
-
-    for (const CapturedScreen& screen : m_captureResult.screens()) {
-        const QRect overlapGlobal = selectionGlobal.intersected(screen.logicalGeometry);
-        if (overlapGlobal.isEmpty()) {
-            continue;
-        }
-
-        const QRect physicalSrc = m_captureResult.logicalToPhysical(screen, overlapGlobal);
-        if (physicalSrc.isEmpty()) {
-            continue;
-        }
-
-        const QRect overlapLocal = globalToOverlayLogical(overlapGlobal);
-        const QPointF targetTopLeft(overlapLocal.topLeft() - selection.topLeft());
-        const QRectF targetRect(targetTopLeft, QSizeF(overlapLocal.size()));
-
-        QImage sourceImage = screen.image;
-        sourceImage.setDevicePixelRatio(1.0);
-        painter.drawImage(targetRect, sourceImage, physicalSrc);
-    }
-
-    painter.end();
-    image.setDevicePixelRatio(effectiveDpr);
-    return QPixmap::fromImage(image);
 }
 
 void CaptureOverlay::syncAnnotationViewGeometry()
@@ -1235,7 +1179,7 @@ void CaptureOverlay::pinAndClose()
         return;
     }
 
-    const QRect selectionGlobal = overlayToGlobalLogical(m_selectionModel.selectionRect());
+    const QRect selectionGlobal = m_imageComposer.toGlobalLogical(m_selectionModel.selectionRect());
 
     Q_EMIT pinRequested(result, selectionGlobal);
 

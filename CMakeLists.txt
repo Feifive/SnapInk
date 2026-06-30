@@ -6,6 +6,8 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Test)
 qt_standard_project_setup()
 
 set(SNAPINK_CORE_SOURCES
+    src/core/capture/CaptureImageComposer.cpp
+    src/core/capture/CaptureImageComposer.h
     src/core/capture/CapturedScreen.h
     src/core/capture/ScreenCaptureService.cpp
     src/core/capture/ScreenCaptureService.h
@@ -159,6 +161,24 @@ target_link_libraries(CaptureSelectionModelTests
 target_compile_features(CaptureSelectionModelTests PRIVATE cxx_std_20)
 
 add_test(NAME CaptureSelectionModelTests COMMAND CaptureSelectionModelTests)
+
+qt_add_executable(CaptureImageComposerTests
+    tests/capture_image_composer_tests.cpp
+    src/core/capture/CaptureImageComposer.cpp
+    src/core/capture/CaptureImageComposer.h
+    src/core/capture/CapturedScreen.h
+)
+
+target_link_libraries(CaptureImageComposerTests
+    PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Test
+)
+
+target_compile_features(CaptureImageComposerTests PRIVATE cxx_std_20)
+
+add_test(NAME CaptureImageComposerTests COMMAND CaptureImageComposerTests)
 
 if(APPLE)
     target_sources(SnapInkTests PRIVATE
