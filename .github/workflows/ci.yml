@@ -14,15 +14,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Ubuntu 22.04
-            os: ubuntu-22.04
-            qt-arch: ""
           - name: Windows (MSVC 2022)
             os: windows-latest
             qt-arch: win64_msvc2022_64
           - name: macOS (arm64)
             os: macos-latest
-            qt-arch: clang_arm64
+            qt-arch: clang_64
 
     steps:
       - uses: actions/checkout@v4
