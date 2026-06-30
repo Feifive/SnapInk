@@ -236,7 +236,7 @@ cmake --build <build-dir> --target SnapInk
 The macOS hotkey unit tests in `HotkeyMacTests` only exercise the pure
 `SnapInk::HotkeyMac` conversion helpers — they do not register any
 system-wide hotkey, so they are safe under `QT_QPA_PLATFORM=offscreen`. The
-integration verification (pressing `Control+Option+A` and observing the
+integration verification (pressing `Control+1` and observing the
 overlay open) is manual and must be performed with a real display session.
 
 If the final app build fails because the executable cannot be opened, close or stop

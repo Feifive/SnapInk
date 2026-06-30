@@ -214,6 +214,13 @@ QSize PinWindow::boundedImageSize(const QSize& requested, const QRect& available
     return size.expandedTo(QSize(1, 1));
 }
 
+void PinWindow::setActive(bool active)
+{
+    if (m_contentWidget) {
+        m_contentWidget->setActive(active);
+    }
+}
+
 QRect PinWindow::availableGeometryFor(const QPoint& globalPos) const
 {
     QScreen* targetScreen = QGuiApplication::screenAt(globalPos);

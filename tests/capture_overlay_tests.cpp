@@ -1151,7 +1151,6 @@ void CaptureOverlayTests::mainWindowCreatesTrayMenuWithoutRegisteringHotkeysInTe
 
     QCOMPARE(actionTexts,
              QStringList({QStringLiteral("Region Capture"),
-                          QStringLiteral("Full Screen Capture"),
                           QStringLiteral("Show Main Window"),
                           QStringLiteral("Quit")}));
 }

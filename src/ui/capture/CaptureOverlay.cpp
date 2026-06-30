@@ -4,6 +4,7 @@
 #include "CaptureToolbar.h"
 #include "../pin/PinWindow.h"
 #include "../../core/clipboard/ClipboardService.h"
+#include "../../core/hotkey/HotkeyConfig.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -1131,6 +1132,21 @@ void CaptureOverlay::keyPressEvent(QKeyEvent* event)
         return;
     }
 
+    // Pin shortcut: Ctrl+2.  On macOS, Qt::MetaModifier maps to the physical
+    // Control key, matching the Carbon global-hotkey backend where
+    // Qt::ControlModifier → physical Control.
+#ifdef Q_OS_MACOS
+    const bool pinModifier = event->modifiers().testFlag(Qt::MetaModifier);
+#else
+    const bool pinModifier = control;
+#endif
+    if (pinModifier && event->key() == Qt::Key_2) {
+        if (m_hasSelection && m_state == CaptureState::Editing) {
+            pinAndClose();
+        }
+        return;
+    }
+
     QWidget::keyPressEvent(event);
 }
 
@@ -1144,6 +1160,21 @@ bool CaptureOverlay::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched != m_annotationView->viewport() || m_state != CaptureState::Editing) {
         return QWidget::eventFilter(watched, event);
+    }
+
+    // Forward key presses from the annotation view to the overlay so that
+    // keyboard shortcuts (Ctrl+Z, Escape, Ctrl+2 pin, …) work even when the
+    // graphics view or one of its items has keyboard focus.
+    // Only intercept shortcut combinations; let plain character keys pass
+    // through so that text editing still receives typed input.
+    if (event->type() == QEvent::KeyPress) {
+        auto* keyEvent = static_cast<QKeyEvent*>(event);
+        const bool hasModifier = keyEvent->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier | Qt::AltModifier | Qt::MetaModifier);
+        const bool isEscape = keyEvent->key() == Qt::Key_Escape;
+        if (hasModifier || isEscape) {
+            keyPressEvent(keyEvent);
+            return keyEvent->isAccepted();
+        }
     }
 
     if (event->type() == QEvent::MouseButtonPress) {
@@ -1351,6 +1382,7 @@ void CaptureOverlay::pinAndClose()
     auto* pinWindow = new PinWindow(result, selectionGlobal);
     pinWindow->show();
     pinWindow->raise();
+    pinWindow->setActive(true);
 
     m_state = CaptureState::Finished;
     close();

@@ -40,6 +40,8 @@ public:
     /// while preserving aspect ratio. Does not upscale sizes smaller than max.
     static QSize boundedImageSize(const QSize& requested, const QRect& available);
 
+    void setActive(bool active);
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void showEvent(QShowEvent* event) override;

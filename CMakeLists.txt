@@ -50,6 +50,7 @@ qt_add_executable(SnapInk
     src/app/mainwindow.h
     src/core/hotkey/Hotkey.cpp
     src/core/hotkey/Hotkey.h
+    src/core/hotkey/HotkeyConfig.h
     src/core/hotkey/Hotkey_p.h
     src/core/hotkey/HotkeyPlatform.h
     ${SNAPINK_CORE_SOURCES}
@@ -109,6 +110,7 @@ qt_add_executable(SnapInkTests
     src/app/mainwindow.h
     src/core/hotkey/Hotkey.cpp
     src/core/hotkey/Hotkey.h
+    src/core/hotkey/HotkeyConfig.h
     src/core/hotkey/Hotkey_p.h
     src/core/hotkey/HotkeyPlatform.h
     ${SNAPINK_CORE_SOURCES}

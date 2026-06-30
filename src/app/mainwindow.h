@@ -28,7 +28,6 @@ private:
     void registerHotkeys();
     void handleHotkeyRegistrationFailure(const QString& shortcut, const QString& reason);
     void startRegionCapture();
-    void startFullScreenCapture();
     void showOverlay(CaptureOverlay* overlay);
     void showCaptureUnavailable();
     void showMainWindow();
@@ -37,7 +36,6 @@ private:
     QSystemTrayIcon* m_trayIcon = nullptr;
     QMenu* m_trayMenu = nullptr;
     Hotkey* m_regionHotkey = nullptr;
-    Hotkey* m_fullScreenHotkey = nullptr;
     QPointer<CaptureOverlay> m_activeOverlay;
     bool m_isQuitting = false;
 };
