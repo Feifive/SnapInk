@@ -2,6 +2,7 @@
 #define CAPTUREOVERLAY_H
 
 #include "AnnotationSceneController.h"
+#include "CaptureInputController.h"
 #include "CaptureSelectionModel.h"
 #include "CaptureTool.h"
 #include "../../core/capture/CaptureImageComposer.h"
@@ -99,6 +100,7 @@ private:
     void expandSelectionToPoint(const QPoint& imagePoint);
 
     // ----- annotation drawing -------------------------------------------------
+    CaptureInputController::Callbacks makeInputCallbacks();
     void setupAnnotationView();
     void prepareAnnotationScene();
     void syncAnnotationViewGeometry();
@@ -128,9 +130,10 @@ private:
     QRect m_virtualGeometry;
     CaptureSelectionModel m_selectionModel;
     CaptureImageComposer m_imageComposer;
+    AnnotationSceneController m_annotationController;
+    CaptureInputController m_inputController;
     CaptureState m_state = CaptureState::Selecting;
     CaptureToolbar* m_toolbar = nullptr;
-    AnnotationSceneController m_annotationController;
     QWidget* m_selectionChromeLayer = nullptr;
 };
 

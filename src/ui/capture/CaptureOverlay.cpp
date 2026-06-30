@@ -16,7 +16,6 @@
 #include <QPainter>
 #include <QResizeEvent>
 #include <QStandardPaths>
-#include <QWheelEvent>
 
 namespace
 {
@@ -72,6 +71,7 @@ CaptureOverlay::CaptureOverlay(CaptureResult captureResult,
     , m_virtualGeometry(virtualGeometry)
     , m_selectionModel(QRect(QPoint(0, 0), virtualGeometry.size()))
     , m_imageComposer(m_captureResult, m_virtualGeometry)
+    , m_inputController(m_annotationController, m_selectionModel, makeInputCallbacks())
     , m_toolbar(new CaptureToolbar(this))
     , m_selectionChromeLayer(new SelectionChromeLayer(this))
 {
@@ -529,6 +529,76 @@ void CaptureOverlay::expandSelectionToPoint(const QPoint& imagePoint)
     applySelectionModelChange(oldRect);
 }
 
+CaptureInputController::Callbacks CaptureOverlay::makeInputCallbacks()
+{
+    CaptureInputController::Callbacks callbacks;
+    callbacks.viewportToOverlayPos = [this](const QPoint& viewportPos) {
+        QGraphicsView* annotationView = m_annotationController.view();
+        if (annotationView == nullptr || annotationView->viewport() == nullptr) {
+            return QPoint();
+        }
+        return annotationView->viewport()->mapTo(this, viewportPos);
+    };
+    callbacks.viewportToSelectionPos = [this](const QPointF& viewportPos) {
+        return clampSelectionPoint(viewportPos);
+    };
+    callbacks.hitTestHandle = [this](const QPoint& overlayPos) {
+        return hitTestSelectionHandle(overlayPos);
+    };
+    callbacks.isInsideSelection = [this](const QPoint& overlayPos) {
+        return isInsideSelection(overlayPos);
+    };
+    callbacks.canAdjustSelectionAt = [this](const QPoint& overlayPos) {
+        return canAdjustSelectionAt(overlayPos);
+    };
+    callbacks.beginResize = [this](SelectionHandle handle, const QPoint& overlayPos) {
+        beginResizeSelection(handle, overlayPos);
+    };
+    callbacks.updateResize = [this](const QPoint& overlayPos) {
+        updateResizeSelection(overlayPos);
+    };
+    callbacks.beginMove = [this](const QPoint& overlayPos) {
+        beginMoveSelection(overlayPos);
+    };
+    callbacks.updateMove = [this](const QPoint& overlayPos) {
+        updateMoveSelection(overlayPos);
+    };
+    callbacks.finishSelectionInteraction = [this]() {
+        finishSelectionInteraction();
+    };
+    callbacks.resizeSelectionByWheel = [this](int pixelDelta) {
+        resizeSelectionByWheel(pixelDelta);
+    };
+    callbacks.updateSelectionCursor = [this](const QPoint& overlayPos) {
+        updateSelectionCursor(overlayPos);
+    };
+    callbacks.beginAnnotation = [this](const QPointF& selectionPos) {
+        m_annotationController.beginAnnotation(selectionPos);
+    };
+    callbacks.updateAnnotation = [this](const QPointF& selectionPos) {
+        m_annotationController.updateAnnotation(selectionPos);
+    };
+    callbacks.finishAnnotation = [this](const QPointF& selectionPos) {
+        m_annotationController.finishAnnotation(selectionPos);
+    };
+    callbacks.beginTextEditing = [this](const QPointF& selectionPos) {
+        m_annotationController.beginTextEditing(selectionPos);
+    };
+    callbacks.commitActiveTextEditing = [this]() {
+        m_annotationController.commitActiveTextEditing();
+    };
+    callbacks.activeTextItemContainsViewPos = [this](const QPoint& viewportPos) {
+        return m_annotationController.activeTextItemContainsViewPos(viewportPos);
+    };
+    callbacks.forwardShortcut = [this](QKeyEvent* event) {
+        keyPressEvent(event);
+    };
+    callbacks.reselect = [this]() {
+        reselect();
+    };
+    return callbacks;
+}
+
 void CaptureOverlay::setupAnnotationView()
 {
     QGraphicsView* annotationView = m_annotationController.view();
@@ -731,118 +801,12 @@ void CaptureOverlay::contextMenuEvent(QContextMenuEvent* event)
 
 bool CaptureOverlay::eventFilter(QObject* watched, QEvent* event)
 {
-    QGraphicsView* annotationView = m_annotationController.view();
-    if (watched != annotationView->viewport() || m_state != CaptureState::Editing) {
-        return QWidget::eventFilter(watched, event);
-    }
-
-    const CaptureTool currentTool = m_annotationController.currentTool();
-
-    // Forward key presses from the annotation view to the overlay so that
-    // keyboard shortcuts (Ctrl+Z, Escape, Ctrl+2 pin, …) work even when the
-    // graphics view or one of its items has keyboard focus.
-    // Only intercept shortcut combinations; let plain character keys pass
-    // through so that text editing still receives typed input.
-    if (event->type() == QEvent::KeyPress) {
-        auto* keyEvent = static_cast<QKeyEvent*>(event);
-        const bool hasModifier = keyEvent->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier | Qt::AltModifier | Qt::MetaModifier);
-        const bool isEscape = keyEvent->key() == Qt::Key_Escape;
-        if (hasModifier || isEscape) {
-            keyPressEvent(keyEvent);
-            return keyEvent->isAccepted();
-        }
-    }
-
-    if (event->type() == QEvent::MouseButtonPress) {
-        auto* mouseEvent = static_cast<QMouseEvent*>(event);
-        if (mouseEvent->button() == Qt::RightButton) {
-            // In Editing state, right-click on annotation view → reselect
-            reselect();
-            return true;
-        }
-        if (mouseEvent->button() != Qt::LeftButton) {
-            return true;
-        }
-
-        if (m_annotationController.hasActiveTextEditing() && currentTool == CaptureTool::Select) {
-            if (m_annotationController.activeTextItemContainsViewPos(mouseEvent->pos())) {
-                return QWidget::eventFilter(watched, event);
-            }
-            m_annotationController.commitActiveTextEditing();
-        } else if (m_annotationController.hasActiveTextEditing()) {
-            if (m_annotationController.activeTextItemContainsViewPos(mouseEvent->pos())) {
-                return QWidget::eventFilter(watched, event);
-            }
-            m_annotationController.commitActiveTextEditing();
-            return true;
-        }
-
-        if (currentTool == CaptureTool::Select) {
-            const QPoint overlayPos = annotationView->viewport()->mapTo(this, mouseEvent->pos());
-            const SelectionHandle handle = hitTestSelectionHandle(overlayPos);
-            if (handle != SelectionHandle::None) {
-                beginResizeSelection(handle, overlayPos);
-            } else if (isInsideSelection(overlayPos)) {
-                beginMoveSelection(overlayPos);
-            }
-            return true;
-        }
-
-        const QPointF selectionPos = clampSelectionPoint(mouseEvent->position());
-        if (currentTool == CaptureTool::Text) {
-            m_annotationController.beginTextEditing(selectionPos);
-        } else {
-            m_annotationController.beginAnnotation(selectionPos);
-        }
+    if (m_inputController.handleViewportEvent(watched,
+                                              event,
+                                              m_annotationController.view(),
+                                              m_state == CaptureState::Editing)) {
         return true;
     }
-
-    if (event->type() == QEvent::MouseMove) {
-        auto* mouseEvent = static_cast<QMouseEvent*>(event);
-        if (currentTool == CaptureTool::Select) {
-            const QPoint overlayPos = annotationView->viewport()->mapTo(this, mouseEvent->pos());
-            if (m_selectionModel.interaction() == SelectionInteraction::Moving) {
-                updateMoveSelection(overlayPos);
-                return true;
-            }
-            if (m_selectionModel.interaction() == SelectionInteraction::Resizing) {
-                updateResizeSelection(overlayPos);
-                return true;
-            }
-            updateSelectionCursor(overlayPos);
-            return true;
-        }
-        if (m_annotationController.hasActivePreview()) {
-            m_annotationController.updateAnnotation(clampSelectionPoint(mouseEvent->position()));
-            return true;
-        }
-    }
-
-    if (event->type() == QEvent::MouseButtonRelease) {
-        auto* mouseEvent = static_cast<QMouseEvent*>(event);
-        if (mouseEvent->button() == Qt::LeftButton && currentTool == CaptureTool::Select) {
-            finishSelectionInteraction();
-            return true;
-        }
-        if (mouseEvent->button() == Qt::LeftButton && m_annotationController.hasActivePreview()) {
-            m_annotationController.finishAnnotation(clampSelectionPoint(mouseEvent->position()));
-            return true;
-        }
-    }
-
-    if (event->type() == QEvent::Wheel && currentTool == CaptureTool::Select) {
-        auto* wheelEvent = static_cast<QWheelEvent*>(event);
-        const QPoint overlayPos = annotationView->viewport()->mapTo(this, wheelEvent->position().toPoint());
-        if (canAdjustSelectionAt(overlayPos)) {
-            if (wheelEvent->angleDelta().y() > 0) {
-                resizeSelectionByWheel(1);
-            } else if (wheelEvent->angleDelta().y() < 0) {
-                resizeSelectionByWheel(-1);
-            }
-            return true;
-        }
-    }
-
     return QWidget::eventFilter(watched, event);
 }
 

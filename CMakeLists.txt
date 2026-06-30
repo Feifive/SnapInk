@@ -22,6 +22,8 @@ set(SNAPINK_CAPTURE_SOURCES
     src/ui/capture/AnnotationSceneController.h
     src/ui/capture/CaptureAnnotation.cpp
     src/ui/capture/CaptureAnnotation.h
+    src/ui/capture/CaptureInputController.cpp
+    src/ui/capture/CaptureInputController.h
     src/ui/capture/CaptureOverlay.cpp
     src/ui/capture/CaptureOverlay.h
     src/ui/capture/CaptureSelectionModel.cpp
@@ -204,6 +206,33 @@ target_link_libraries(AnnotationSceneControllerTests
 target_compile_features(AnnotationSceneControllerTests PRIVATE cxx_std_20)
 
 add_test(NAME AnnotationSceneControllerTests COMMAND AnnotationSceneControllerTests)
+
+qt_add_executable(CaptureInputControllerTests
+    tests/capture_input_controller_tests.cpp
+    src/ui/capture/AddAnnotationCommand.cpp
+    src/ui/capture/AddAnnotationCommand.h
+    src/ui/capture/AnnotationSceneController.cpp
+    src/ui/capture/AnnotationSceneController.h
+    src/ui/capture/CaptureAnnotation.cpp
+    src/ui/capture/CaptureAnnotation.h
+    src/ui/capture/CaptureInputController.cpp
+    src/ui/capture/CaptureInputController.h
+    src/ui/capture/CaptureSelectionModel.cpp
+    src/ui/capture/CaptureSelectionModel.h
+    src/ui/capture/CaptureTool.h
+)
+
+target_link_libraries(CaptureInputControllerTests
+    PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+)
+
+target_compile_features(CaptureInputControllerTests PRIVATE cxx_std_20)
+
+add_test(NAME CaptureInputControllerTests COMMAND CaptureInputControllerTests)
 
 if(APPLE)
     target_sources(SnapInkTests PRIVATE
