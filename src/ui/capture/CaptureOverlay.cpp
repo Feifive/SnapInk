@@ -24,7 +24,7 @@
 namespace
 {
 constexpr int kDimAlpha = 120;
-constexpr int kMinimumSelectionSize = 2;
+constexpr int kMinimumAnnotationSize = 2;
 constexpr qreal kMinimumArrowLength = 4.0;
 constexpr int kHandleRadius = 4;
 constexpr int kToolbarGap = 8;
@@ -815,7 +815,7 @@ bool CaptureOverlay::previewIsLargeEnough() const
 
     if (const auto* rect = dynamic_cast<const RectAnnotationItem*>(m_previewItem)) {
         const QRectF r = rect->rect();
-        return r.width() >= kMinimumSelectionSize && r.height() >= kMinimumSelectionSize;
+        return r.width() >= kMinimumAnnotationSize && r.height() >= kMinimumAnnotationSize;
     }
     if (const auto* arrow = dynamic_cast<const ArrowAnnotationItem*>(m_previewItem)) {
         return arrow->line().length() >= kMinimumArrowLength;
@@ -823,7 +823,7 @@ bool CaptureOverlay::previewIsLargeEnough() const
     if (const auto* pen = dynamic_cast<const PenAnnotationItem*>(m_previewItem)) {
         const QRectF bounds = pen->path().controlPointRect();
         return m_penPointCount >= 2
-               && (bounds.width() >= kMinimumSelectionSize || bounds.height() >= kMinimumSelectionSize);
+               && (bounds.width() >= kMinimumAnnotationSize || bounds.height() >= kMinimumAnnotationSize);
     }
 
     return true;

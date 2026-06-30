@@ -9,6 +9,7 @@ class CaptureSelectionModelTests : public QObject
 
 private slots:
     void initialSelectionBuildsExpectedRect();
+    void reverseDragSelectionBuildsExpectedRect();
     void tooSmallSelectionCannotCommit();
     void movingSelectionStaysInsideBounds();
     void resizingHandlesAdjustExpectedEdges();
@@ -18,6 +19,7 @@ private slots:
     void wheelResizeStopsAtBoundsAndMinimumSize();
     void nonZeroBoundsOriginIsRespected();
     void moveToBottomRightUsesExclusiveBoundsEdge();
+    void bottomRightResizeStopsAtExclusiveBoundsEdge();
     void wheelResizeWithNonZeroBoundsStopsAtExclusiveBoundsEdge();
 };
 
@@ -33,14 +35,27 @@ void CaptureSelectionModelTests::initialSelectionBuildsExpectedRect()
     QCOMPARE(model.selectionRect(), QRect(10, 12, 20, 13));
 }
 
-void CaptureSelectionModelTests::tooSmallSelectionCannotCommit()
+void CaptureSelectionModelTests::reverseDragSelectionBuildsExpectedRect()
 {
     CaptureSelectionModel model(QRect(0, 0, 100, 80));
 
-    model.beginSelection(QPoint(10, 10));
-    model.updateSelection(QPoint(11, 20));
+    model.beginSelection(QPoint(30, 25));
+    model.updateSelection(QPoint(10, 12));
 
-    QCOMPARE(model.currentSelection(), QRect(10, 10, 1, 10));
+    QCOMPARE(model.currentSelection(), QRect(10, 12, 20, 13));
+    QVERIFY(model.commitSelection());
+    QCOMPARE(model.selectionRect(), QRect(10, 12, 20, 13));
+}
+
+void CaptureSelectionModelTests::tooSmallSelectionCannotCommit()
+{
+    CaptureSelectionModel model(QRect(0, 0, 100, 80));
+    constexpr int minimumSize = CaptureSelectionModel::minimumSelectionSize();
+
+    model.beginSelection(QPoint(10, 10));
+    model.updateSelection(QPoint(10 + minimumSize - 1, 20));
+
+    QCOMPARE(model.currentSelection(), QRect(10, 10, minimumSize - 1, 10));
     QVERIFY(!model.commitSelection());
     QVERIFY(!model.hasSelection());
     QVERIFY(model.selectionRect().isEmpty());
@@ -114,12 +129,13 @@ void CaptureSelectionModelTests::resizingHandlesAdjustExpectedEdges()
 void CaptureSelectionModelTests::resizingCannotShrinkBelowMinimumSize()
 {
     CaptureSelectionModel model(QRect(0, 0, 100, 80));
+    constexpr int minimumSize = CaptureSelectionModel::minimumSelectionSize();
     model.setSelectionRect(QRect(10, 10, 10, 10));
 
     model.beginResize(SelectionHandle::Left, QPoint(10, 14));
     QVERIFY(model.updateResize(QPoint(30, 14)));
 
-    QCOMPARE(model.selectionRect(), QRect(18, 10, 2, 10));
+    QCOMPARE(model.selectionRect(), QRect(20 - minimumSize, 10, minimumSize, 10));
 }
 
 void CaptureSelectionModelTests::hitTestingFindsHandlesAndSelectionInterior()
@@ -170,10 +186,11 @@ void CaptureSelectionModelTests::wheelResizeStopsAtBoundsAndMinimumSize()
 
     {
         CaptureSelectionModel model(QRect(0, 0, 100, 80));
-        model.setSelectionRect(QRect(20, 20, 2, 2));
+        constexpr int minimumSize = CaptureSelectionModel::minimumSelectionSize();
+        model.setSelectionRect(QRect(20, 20, minimumSize, minimumSize));
 
         QVERIFY(!model.resizeByWheel(-1));
-        QCOMPARE(model.selectionRect(), QRect(20, 20, 2, 2));
+        QCOMPARE(model.selectionRect(), QRect(20, 20, minimumSize, minimumSize));
     }
 }
 
@@ -205,6 +222,19 @@ void CaptureSelectionModelTests::moveToBottomRightUsesExclusiveBoundsEdge()
     QVERIFY(model.updateMove(QPoint(1000, 1000)));
 
     QCOMPARE(model.selectionRect(), QRect(90, 75, 20, 25));
+    QCOMPARE(model.selectionRect().right(), 109);
+    QCOMPARE(model.selectionRect().bottom(), 99);
+}
+
+void CaptureSelectionModelTests::bottomRightResizeStopsAtExclusiveBoundsEdge()
+{
+    CaptureSelectionModel model(QRect(10, 20, 100, 80));
+    model.setSelectionRect(QRect(80, 70, 20, 20));
+
+    model.beginResize(SelectionHandle::BottomRight, QPoint(99, 89));
+    QVERIFY(model.updateResize(QPoint(1000, 1000)));
+
+    QCOMPARE(model.selectionRect(), QRect(80, 70, 30, 30));
     QCOMPARE(model.selectionRect().right(), 109);
     QCOMPARE(model.selectionRect().bottom(), 99);
 }

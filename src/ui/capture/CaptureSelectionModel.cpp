@@ -7,7 +7,6 @@
 
 namespace
 {
-constexpr int kMinimumSelectionSize = 2;
 constexpr int kHandleHitRadius = 8;
 
 int rightExclusive(const QRect& rect)
@@ -249,6 +248,7 @@ bool CaptureSelectionModel::updateResize(const QPoint& point)
     }
 
     const QPoint delta = point - m_pressPoint;
+    constexpr int minimumSize = CaptureSelectionModel::minimumSelectionSize();
     int left = m_initialSelectionRect.left();
     int top = m_initialSelectionRect.top();
     int rightEdge = rightExclusive(m_initialSelectionRect);
@@ -257,26 +257,26 @@ bool CaptureSelectionModel::updateResize(const QPoint& point)
     if (adjustsLeft(m_activeHandle)) {
         const int proposedLeft = left + delta.x();
         left = hasBounds()
-            ? qBound(m_bounds.left(), proposedLeft, rightEdge - kMinimumSelectionSize)
-            : qMin(proposedLeft, rightEdge - kMinimumSelectionSize);
+            ? qBound(m_bounds.left(), proposedLeft, rightEdge - minimumSize)
+            : qMin(proposedLeft, rightEdge - minimumSize);
     }
     if (adjustsRight(m_activeHandle)) {
         const int proposedRight = rightEdge + delta.x();
         rightEdge = hasBounds()
-            ? qBound(left + kMinimumSelectionSize, proposedRight, rightExclusive(m_bounds))
-            : qMax(proposedRight, left + kMinimumSelectionSize);
+            ? qBound(left + minimumSize, proposedRight, rightExclusive(m_bounds))
+            : qMax(proposedRight, left + minimumSize);
     }
     if (adjustsTop(m_activeHandle)) {
         const int proposedTop = top + delta.y();
         top = hasBounds()
-            ? qBound(m_bounds.top(), proposedTop, bottomEdge - kMinimumSelectionSize)
-            : qMin(proposedTop, bottomEdge - kMinimumSelectionSize);
+            ? qBound(m_bounds.top(), proposedTop, bottomEdge - minimumSize)
+            : qMin(proposedTop, bottomEdge - minimumSize);
     }
     if (adjustsBottom(m_activeHandle)) {
         const int proposedBottom = bottomEdge + delta.y();
         bottomEdge = hasBounds()
-            ? qBound(top + kMinimumSelectionSize, proposedBottom, bottomExclusive(m_bounds))
-            : qMax(proposedBottom, top + kMinimumSelectionSize);
+            ? qBound(top + minimumSize, proposedBottom, bottomExclusive(m_bounds))
+            : qMax(proposedBottom, top + minimumSize);
     }
 
     const QRect resized = rectFromExclusiveEdges(left, top, rightEdge, bottomEdge);
@@ -316,6 +316,7 @@ bool CaptureSelectionModel::resizeByWheel(int delta)
     int top = m_selectionRect.top();
     int rightEdge = rightExclusive(m_selectionRect);
     int bottomEdge = bottomExclusive(m_selectionRect);
+    constexpr int minimumSize = CaptureSelectionModel::minimumSelectionSize();
 
     if (delta > 0) {
         left = hasBounds() ? qMax(m_bounds.left(), left - 1) : left - 1;
@@ -323,13 +324,13 @@ bool CaptureSelectionModel::resizeByWheel(int delta)
         rightEdge = hasBounds() ? qMin(rightExclusive(m_bounds), rightEdge + 1) : rightEdge + 1;
         bottomEdge = hasBounds() ? qMin(bottomExclusive(m_bounds), bottomEdge + 1) : bottomEdge + 1;
     } else {
-        if (rightEdge - left <= kMinimumSelectionSize || bottomEdge - top <= kMinimumSelectionSize) {
+        if (rightEdge - left <= minimumSize || bottomEdge - top <= minimumSize) {
             return false;
         }
-        left = qMin(left + 1, rightEdge - kMinimumSelectionSize);
-        top = qMin(top + 1, bottomEdge - kMinimumSelectionSize);
-        rightEdge = qMax(rightEdge - 1, left + kMinimumSelectionSize);
-        bottomEdge = qMax(bottomEdge - 1, top + kMinimumSelectionSize);
+        left = qMin(left + 1, rightEdge - minimumSize);
+        top = qMin(top + 1, bottomEdge - minimumSize);
+        rightEdge = qMax(rightEdge - 1, left + minimumSize);
+        bottomEdge = qMax(bottomEdge - 1, top + minimumSize);
     }
 
     const QRect resized = rectFromExclusiveEdges(left, top, rightEdge, bottomEdge);
@@ -353,7 +354,8 @@ QRect CaptureSelectionModel::clippedRect(const QRect& rect) const
 QRect CaptureSelectionModel::boundedRect(const QRect& rect) const
 {
     const QRect bounded = clippedRect(rect);
-    if (bounded.width() < kMinimumSelectionSize || bounded.height() < kMinimumSelectionSize) {
+    constexpr int minimumSize = CaptureSelectionModel::minimumSelectionSize();
+    if (bounded.width() < minimumSize || bounded.height() < minimumSize) {
         return {};
     }
     return bounded;

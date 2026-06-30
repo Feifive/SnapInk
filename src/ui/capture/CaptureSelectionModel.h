@@ -29,6 +29,8 @@ class CaptureSelectionModel
 public:
     explicit CaptureSelectionModel(const QRect& bounds = {});
 
+    static constexpr int minimumSelectionSize() { return 2; }
+
     void setBounds(const QRect& bounds);
     QRect bounds() const;
 
