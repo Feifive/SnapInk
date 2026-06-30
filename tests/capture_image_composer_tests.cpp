@@ -39,6 +39,7 @@ private slots:
     void horizontalScreensComposeCrossScreenSelection();
     void negativeVirtualOriginComposesExpectedGlobalRegion();
     void mixedDprSelectionUsesMaximumIntersectingDpr();
+    void mixedDprCrossScreenSelectionHasNoBoundarySeam();
     void emptyCaptureResultProducesTransparentImage();
 };
 
@@ -128,6 +129,9 @@ void CaptureImageComposerTests::negativeVirtualOriginComposesExpectedGlobalRegio
     const CaptureResult captureResult({screen});
     const CaptureImageComposer composer(captureResult, QRect(-100, -50, 200, 100));
 
+    QCOMPARE(composer.overlayLocalToGlobalLogical(QRect(10, 20, 30, 20)),
+             QRect(-90, -30, 30, 20));
+
     const QImage image = composer.composeSelectionImage(QRect(10, 20, 30, 20));
 
     QCOMPARE(image.size(), QSize(30, 20));
@@ -152,6 +156,28 @@ void CaptureImageComposerTests::mixedDprSelectionUsesMaximumIntersectingDpr()
     QCOMPARE(image.pixelColor(39, 10), QColor(Qt::red));
     QCOMPARE(image.pixelColor(40, 10), QColor(Qt::blue));
     QCOMPARE(image.pixelColor(79, 39), QColor(Qt::blue));
+}
+
+void CaptureImageComposerTests::mixedDprCrossScreenSelectionHasNoBoundarySeam()
+{
+    const CapturedScreen left = makeTestScreen(QRect(0, 0, 100, 50), 1.0, Qt::red);
+    const CapturedScreen right = makeTestScreen(QRect(100, 0, 100, 50), 2.0, Qt::blue);
+    const CaptureResult captureResult({left, right});
+    const CaptureImageComposer composer(captureResult, QRect(0, 0, 200, 50));
+
+    const QImage image = composer.composeSelectionImage(QRect(80, 0, 40, 20));
+
+    QCOMPARE(image.devicePixelRatio(), 2.0);
+    QCOMPARE(image.size(), QSize(80, 40));
+
+    for (int y = 0; y < image.height(); ++y) {
+        QCOMPARE(image.pixelColor(38, y), QColor(Qt::red));
+        QCOMPARE(image.pixelColor(39, y), QColor(Qt::red));
+        QCOMPARE(image.pixelColor(40, y), QColor(Qt::blue));
+        QCOMPARE(image.pixelColor(41, y), QColor(Qt::blue));
+        QCOMPARE(image.pixelColor(39, y).alpha(), 255);
+        QCOMPARE(image.pixelColor(40, y).alpha(), 255);
+    }
 }
 
 void CaptureImageComposerTests::emptyCaptureResultProducesTransparentImage()

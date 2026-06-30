@@ -490,7 +490,7 @@ void CaptureOverlay::updateSelectionBackground()
     }
 
     const QPixmap selectionPixmap =
-        m_imageComposer.composeSelectionPixmap(m_selectionModel.selectionRect());
+        QPixmap::fromImage(m_imageComposer.composeSelectionImage(m_selectionModel.selectionRect()));
     if (m_selectionPixmapItem == nullptr || m_selectionPixmapItem->scene() != m_annotationScene) {
         m_selectionPixmapItem = m_annotationScene->addPixmap(selectionPixmap);
         m_selectionPixmapItem->setZValue(-1000.0);
@@ -587,7 +587,7 @@ void CaptureOverlay::prepareAnnotationScene()
     m_annotationScene->clear();
     m_annotationScene->setSceneRect(selectionSceneRect());
     const QPixmap selectionPixmap =
-        m_imageComposer.composeSelectionPixmap(m_selectionModel.selectionRect());
+        QPixmap::fromImage(m_imageComposer.composeSelectionImage(m_selectionModel.selectionRect()));
     m_selectionPixmapItem = m_annotationScene->addPixmap(selectionPixmap);
     m_selectionPixmapItem->setPos(0, 0);
     m_selectionPixmapItem->setZValue(-1000.0);
@@ -1179,7 +1179,8 @@ void CaptureOverlay::pinAndClose()
         return;
     }
 
-    const QRect selectionGlobal = m_imageComposer.toGlobalLogical(m_selectionModel.selectionRect());
+    const QRect selectionGlobal =
+        m_imageComposer.overlayLocalToGlobalLogical(m_selectionModel.selectionRect());
 
     Q_EMIT pinRequested(result, selectionGlobal);
 

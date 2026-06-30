@@ -18,14 +18,14 @@ CaptureImageComposer::CaptureImageComposer(const CaptureResult& captureResult,
 {
 }
 
-QRect CaptureImageComposer::toGlobalLogical(const QRect& overlayLocalRect) const
+QRect CaptureImageComposer::overlayLocalToGlobalLogical(const QRect& localRect) const
 {
-    return overlayLocalRect.translated(m_virtualGeometry.topLeft());
+    return localRect.translated(m_virtualGeometry.topLeft());
 }
 
-QRect CaptureImageComposer::toOverlayLogical(const QRect& globalLogicalRect) const
+QRect CaptureImageComposer::globalToOverlayLocalLogical(const QRect& globalRect) const
 {
-    return globalLogicalRect.translated(-m_virtualGeometry.topLeft());
+    return globalRect.translated(-m_virtualGeometry.topLeft());
 }
 
 qreal CaptureImageComposer::effectiveDevicePixelRatio(const QRect& overlayLocalRect) const
@@ -34,7 +34,7 @@ qreal CaptureImageComposer::effectiveDevicePixelRatio(const QRect& overlayLocalR
         return 1.0;
     }
 
-    const QRect globalLogicalRect = toGlobalLogical(overlayLocalRect);
+    const QRect globalLogicalRect = overlayLocalToGlobalLogical(overlayLocalRect);
     qreal dpr = 1.0;
     for (const CapturedScreen& screen : m_captureResult.screens()) {
         if (screen.logicalGeometry.intersects(globalLogicalRect)) {
@@ -69,7 +69,7 @@ QImage CaptureImageComposer::composeSelectionImage(const QRect& overlayLocalRect
         return {};
     }
 
-    const QRect selectionGlobal = toGlobalLogical(overlayLocalRect);
+    const QRect selectionGlobal = overlayLocalToGlobalLogical(overlayLocalRect);
     const qreal dpr = image.devicePixelRatio();
 
     image.setDevicePixelRatio(1.0);
@@ -87,7 +87,7 @@ QImage CaptureImageComposer::composeSelectionImage(const QRect& overlayLocalRect
             continue;
         }
 
-        const QRect overlapLocal = toOverlayLogical(overlapGlobal);
+        const QRect overlapLocal = globalToOverlayLocalLogical(overlapGlobal);
         const QPointF targetTopLeft(overlapLocal.topLeft() - overlayLocalRect.topLeft());
         const QRectF targetRect(targetTopLeft, QSizeF(overlapLocal.size()));
 
@@ -99,13 +99,4 @@ QImage CaptureImageComposer::composeSelectionImage(const QRect& overlayLocalRect
     painter.end();
     image.setDevicePixelRatio(dpr);
     return image;
-}
-
-QPixmap CaptureImageComposer::composeSelectionPixmap(const QRect& overlayLocalRect) const
-{
-    const QImage image = composeSelectionImage(overlayLocalRect);
-    if (image.isNull()) {
-        return {};
-    }
-    return QPixmap::fromImage(image);
 }
