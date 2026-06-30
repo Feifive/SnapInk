@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu 22.04
+            os: ubuntu-22.04
+            qt-arch: ""
+          - name: Windows (MSVC 2022)
+            os: windows-latest
+            qt-arch: win64_msvc2022_64
+          - name: macOS (arm64)
+            os: macos-latest
+            qt-arch: clang_arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Qt 6.8.3 (aqtinstall, all platforms) ─────────────
+      - name: Install Qt 6.8.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: ${{ matrix.qt-arch || '' }}
+
+      # ── Platform toolchain ────────────────────────────────
+      - name: Set up MSVC developer command prompt
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Ensure Ninja is available
+        run: python3 -m pip install ninja
+        shell: bash
+
+      # ── Configure & Build ─────────────────────────────────
+      - name: CMake configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build all targets
+        run: cmake --build build --config Release
+
+      # ── Test ──────────────────────────────────────────────
+      # ctest runs every target registered via add_test():
+      #   SnapInkTests  (all platforms)
+      #   HotkeyMacTests (macOS only)
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+        env:
+          QT_QPA_PLATFORM: offscreen
