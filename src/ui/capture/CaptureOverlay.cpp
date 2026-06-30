@@ -199,7 +199,7 @@ QImage CaptureOverlay::renderResultImage()
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.scale(canvasDpr, canvasDpr);
 
-    m_annotationController.renderAnnotations(&painter, selectionSceneRect());
+    m_annotationController.renderScene(&painter, selectionSceneRect());
 
     painter.end();
     result.setDevicePixelRatio(canvasDpr);

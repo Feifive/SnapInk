@@ -72,6 +72,7 @@ void AnnotationSceneController::setSceneRect(const QRectF& rect)
 {
     m_scene->setSceneRect(rect);
     m_view->setSceneRect(rect);
+    m_scene->update();
 }
 
 QRectF AnnotationSceneController::sceneRect() const
@@ -310,8 +311,8 @@ bool AnnotationSceneController::canRedo() const
     return m_undoStack.canRedo();
 }
 
-void AnnotationSceneController::renderAnnotations(QPainter* painter,
-                                                  const QRectF& targetSceneRect)
+void AnnotationSceneController::renderScene(QPainter* painter,
+                                            const QRectF& targetSceneRect)
 {
     if (painter == nullptr) {
         return;

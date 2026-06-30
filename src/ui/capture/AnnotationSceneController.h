@@ -63,8 +63,8 @@ public:
     bool canUndo() const;
     bool canRedo() const;
 
-    void renderAnnotations(QPainter* painter,
-                           const QRectF& targetSceneRect);
+    void renderScene(QPainter* painter,
+                     const QRectF& targetSceneRect);
 
 private:
     QPointF clampToScene(const QPointF& point) const;

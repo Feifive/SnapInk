@@ -39,7 +39,7 @@ QImage renderController(AnnotationSceneController& controller, const QSize& size
 
     QPainter painter(&image);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    controller.renderAnnotations(&painter, QRectF(QPointF(0.0, 0.0), QSizeF(size)));
+    controller.renderScene(&painter, QRectF(QPointF(0.0, 0.0), QSizeF(size)));
     painter.end();
 
     return image;
