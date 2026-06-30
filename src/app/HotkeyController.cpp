@@ -4,6 +4,7 @@
 #include "../core/hotkey/HotkeyConfig.h"
 
 #include <QDebug>
+#include <QGuiApplication>
 #include <QKeySequence>
 #include <QMessageBox>
 
@@ -62,10 +63,12 @@ void HotkeyController::handleRegistrationFailure(const QString& shortcut,
         << QStringLiteral("Failed to register %1: %2")
                .arg(shortcut, reason);
 
-    QMessageBox::warning(
-        m_dialogParent,
-        QStringLiteral("Global Hotkey Failed"),
-        QStringLiteral("Could not register %1.\n%2").arg(shortcut, reason));
+    if (QGuiApplication::platformName() != QStringLiteral("offscreen")) {
+        QMessageBox::warning(
+            m_dialogParent,
+            QStringLiteral("Global Hotkey Failed"),
+            QStringLiteral("Could not register %1.\n%2").arg(shortcut, reason));
+    }
 
     Q_EMIT shortcutRegistrationFailed(shortcut, reason);
 }

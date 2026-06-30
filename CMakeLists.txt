@@ -20,6 +20,8 @@ set(SNAPINK_CAPTURE_SOURCES
     src/ui/capture/CaptureAnnotation.h
     src/ui/capture/CaptureOverlay.cpp
     src/ui/capture/CaptureOverlay.h
+    src/ui/capture/CaptureSelectionModel.cpp
+    src/ui/capture/CaptureSelectionModel.h
     src/ui/capture/CaptureToolbar.cpp
     src/ui/capture/CaptureToolbar.h
     src/ui/capture/CaptureTool.h
@@ -141,6 +143,22 @@ target_link_libraries(SnapInkTests
 target_compile_features(SnapInkTests PRIVATE cxx_std_20)
 
 add_test(NAME SnapInkTests COMMAND SnapInkTests)
+
+qt_add_executable(CaptureSelectionModelTests
+    tests/capture_selection_model_tests.cpp
+    src/ui/capture/CaptureSelectionModel.cpp
+    src/ui/capture/CaptureSelectionModel.h
+)
+
+target_link_libraries(CaptureSelectionModelTests
+    PRIVATE
+        Qt::Core
+        Qt::Test
+)
+
+target_compile_features(CaptureSelectionModelTests PRIVATE cxx_std_20)
+
+add_test(NAME CaptureSelectionModelTests COMMAND CaptureSelectionModelTests)
 
 if(APPLE)
     target_sources(SnapInkTests PRIVATE

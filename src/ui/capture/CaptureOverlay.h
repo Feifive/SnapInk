@@ -2,6 +2,7 @@
 #define CAPTUREOVERLAY_H
 
 #include "CaptureAnnotation.h"
+#include "CaptureSelectionModel.h"
 #include "CaptureTool.h"
 #include "../../core/capture/CapturedScreen.h"
 
@@ -27,26 +28,6 @@ enum class CaptureState
     Editing,
     Finished,
     Canceled
-};
-
-enum class SelectionHandle
-{
-    None,
-    TopLeft,
-    Top,
-    TopRight,
-    Right,
-    BottomRight,
-    Bottom,
-    BottomLeft,
-    Left
-};
-
-enum class SelectionInteraction
-{
-    None,
-    Moving,
-    Resizing
 };
 
 class CaptureOverlay : public QWidget
@@ -109,15 +90,12 @@ private:
 
     // ----- selection ----------------------------------------------------------
     QRect normalizedImageSelection() const;
-    QRect rectFromImagePoints(const QPoint& first, const QPoint& second) const;
-    bool imagePointInSelection(const QPoint& imagePoint) const;
     bool isInsideSelection(const QPoint& pos) const;
     SelectionHandle hitTestSelectionHandle(const QPoint& pos) const;
     void updateSelectionCursor(const QPoint& pos);
     QCursor cursorForSelectionHandle(SelectionHandle handle) const;
     QPointF clampSelectionPoint(const QPointF& point) const;
     QRectF selectionSceneRect() const;
-    QRect boundedSelectionRect(const QRect& rect) const;
     void beginMoveSelection(const QPoint& globalPos);
     void updateMoveSelection(const QPoint& globalPos);
     void beginResizeSelection(SelectionHandle handle, const QPoint& globalPos);
@@ -125,7 +103,7 @@ private:
     void finishSelectionInteraction();
     void resizeSelectionByWheel(int pixelDelta);
     bool canAdjustSelectionAt(const QPoint& pos) const;
-    void applySelectionRect(const QRect& newRect);
+    void applySelectionModelChange(const QRect& oldRect);
     void updateSelectionBackground();
     void updateAnnotationViewGeometry();
     void updateToolbarPosition();
@@ -168,10 +146,8 @@ private:
     // ----- data members -------------------------------------------------------
     CaptureResult m_captureResult;
     QRect m_virtualGeometry;
+    CaptureSelectionModel m_selectionModel;
     CaptureState m_state = CaptureState::Selecting;
-    QPoint m_selectionStart;
-    QPoint m_selectionEnd;
-    QRect m_selectionImageRect;
     QUndoStack m_undoStack;
     CaptureToolbar* m_toolbar = nullptr;
     QGraphicsView* m_annotationView = nullptr;
@@ -181,16 +157,10 @@ private:
     TextAnnotationItem* m_activeTextItem = nullptr;
     QWidget* m_selectionChromeLayer = nullptr;
     CaptureTool m_currentTool = CaptureTool::Select;
-    QRect m_initialSelectionRect;
-    QPoint m_pressGlobalPos;
-    SelectionHandle m_activeHandle = SelectionHandle::None;
-    SelectionInteraction m_selectionInteraction = SelectionInteraction::None;
     QPen m_annotationPen = QPen(Qt::red, 3.0);
     QPointF m_annotationStart;
     QPainterPath m_activePath;
     int m_penPointCount = 0;
-    bool m_selecting = false;
-    bool m_hasSelection = false;
     bool m_drawingAnnotation = false;
 };
 

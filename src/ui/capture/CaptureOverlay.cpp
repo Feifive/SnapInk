@@ -27,7 +27,6 @@ constexpr int kDimAlpha = 120;
 constexpr int kMinimumSelectionSize = 2;
 constexpr qreal kMinimumArrowLength = 4.0;
 constexpr int kHandleRadius = 4;
-constexpr int kHandleHitRadius = 8;
 constexpr int kToolbarGap = 8;
 
 QString defaultSavePath()
@@ -76,6 +75,7 @@ CaptureOverlay::CaptureOverlay(CaptureResult captureResult,
     : QWidget(parent)
     , m_captureResult(std::move(captureResult))
     , m_virtualGeometry(virtualGeometry)
+    , m_selectionModel(QRect(QPoint(0, 0), virtualGeometry.size()))
     , m_toolbar(new CaptureToolbar(this))
     , m_selectionChromeLayer(new SelectionChromeLayer(this))
 {
@@ -114,20 +114,19 @@ CaptureState CaptureOverlay::state() const
 
 void CaptureOverlay::enterEditing(const QRect& imageRect)
 {
-    const QRect bounds = QRect(QPoint(0, 0), m_virtualGeometry.size());
-    const QRect bounded = imageRect.normalized().intersected(bounds);
-    if (m_captureResult.screens().isEmpty()
-        || bounded.width() < kMinimumSelectionSize
-        || bounded.height() < kMinimumSelectionSize) {
+    if (m_captureResult.screens().isEmpty()) {
+        return;
+    }
+
+    CaptureSelectionModel candidate(m_selectionModel.bounds());
+    candidate.setSelectionRect(imageRect);
+    const QRect bounded = candidate.selectionRect();
+    if (bounded.isEmpty()) {
         return;
     }
 
     clearAnnotationState();
-    m_selectionImageRect = bounded;
-    m_selectionStart = bounded.topLeft();
-    m_selectionEnd = bounded.bottomRight();
-    m_hasSelection = true;
-    m_selecting = false;
+    m_selectionModel.setSelectionRect(bounded);
     m_state = CaptureState::Editing;
 
     prepareAnnotationScene();
@@ -184,16 +183,17 @@ void CaptureOverlay::redo()
 
 QImage CaptureOverlay::renderResultImage() const
 {
-    if (m_state != CaptureState::Editing || m_selectionImageRect.isEmpty() || m_annotationScene == nullptr) {
+    const QRect selection = m_selectionModel.selectionRect();
+    if (m_state != CaptureState::Editing || selection.isEmpty() || m_annotationScene == nullptr) {
         return {};
     }
 
     const_cast<CaptureOverlay*>(this)->commitActiveTextEditing();
 
-    const QRect selectionGlobal = overlayToGlobalLogical(m_selectionImageRect);
+    const QRect selectionGlobal = overlayToGlobalLogical(selection);
     const qreal effectiveDpr = effectiveDevicePixelRatio(selectionGlobal);
-    const int physW = qRound(m_selectionImageRect.width() * effectiveDpr);
-    const int physH = qRound(m_selectionImageRect.height() * effectiveDpr);
+    const int physW = qRound(selection.width() * effectiveDpr);
+    const int physH = qRound(selection.height() * effectiveDpr);
 
     QImage result(physW, physH, QImage::Format_ARGB32);
     result.fill(Qt::transparent);
@@ -335,7 +335,7 @@ QPoint CaptureOverlay::widgetToImage(const QPointF& widgetPos) const
 QPointF CaptureOverlay::widgetToSelection(const QPointF& widgetPos) const
 {
     const QPoint imagePoint = widgetToImage(widgetPos);
-    return clampSelectionPoint(QPointF(imagePoint - m_selectionImageRect.topLeft()));
+    return clampSelectionPoint(QPointF(imagePoint - m_selectionModel.selectionRect().topLeft()));
 }
 
 QRect CaptureOverlay::imageToWidgetRect(const QRect& imageRect) const
@@ -366,65 +366,17 @@ qreal CaptureOverlay::effectiveDevicePixelRatio(const QRect& globalLogicalRect) 
 
 QRect CaptureOverlay::normalizedImageSelection() const
 {
-    if (!m_hasSelection) {
-        return {};
-    }
-
-    if (m_state == CaptureState::Editing) {
-        return m_selectionImageRect;
-    }
-
-    const QSize bounds = m_virtualGeometry.size();
-    return rectFromImagePoints(m_selectionStart, m_selectionEnd)
-        .intersected(QRect(QPoint(0, 0), bounds));
-}
-
-QRect CaptureOverlay::rectFromImagePoints(const QPoint& first, const QPoint& second) const
-{
-    const int left = qMin(first.x(), second.x());
-    const int top = qMin(first.y(), second.y());
-    const int right = qMax(first.x(), second.x());
-    const int bottom = qMax(first.y(), second.y());
-    return QRect(left, top, right - left, bottom - top);
-}
-
-bool CaptureOverlay::imagePointInSelection(const QPoint& imagePoint) const
-{
-    return m_selectionImageRect.contains(imagePoint);
+    return m_selectionModel.currentSelection();
 }
 
 bool CaptureOverlay::isInsideSelection(const QPoint& pos) const
 {
-    return m_selectionImageRect.contains(pos);
+    return m_selectionModel.contains(pos);
 }
 
 SelectionHandle CaptureOverlay::hitTestSelectionHandle(const QPoint& pos) const
 {
-    if (m_selectionImageRect.isEmpty()) {
-        return SelectionHandle::None;
-    }
-
-    const QRect r = m_selectionImageRect;
-    const QList<QPair<SelectionHandle, QPoint>> handles = {
-        {SelectionHandle::TopLeft, r.topLeft()},
-        {SelectionHandle::Top, QPoint(r.center().x(), r.top())},
-        {SelectionHandle::TopRight, r.topRight()},
-        {SelectionHandle::Right, QPoint(r.right(), r.center().y())},
-        {SelectionHandle::BottomRight, r.bottomRight()},
-        {SelectionHandle::Bottom, QPoint(r.center().x(), r.bottom())},
-        {SelectionHandle::BottomLeft, r.bottomLeft()},
-        {SelectionHandle::Left, QPoint(r.left(), r.center().y())},
-    };
-
-    for (const auto& handle : handles) {
-        const QRect hitRect(handle.second - QPoint(kHandleHitRadius, kHandleHitRadius),
-                            QSize(kHandleHitRadius * 2 + 1, kHandleHitRadius * 2 + 1));
-        if (hitRect.contains(pos)) {
-            return handle.first;
-        }
-    }
-
-    return SelectionHandle::None;
+    return m_selectionModel.hitTestHandle(pos);
 }
 
 void CaptureOverlay::updateSelectionCursor(const QPoint& pos)
@@ -467,138 +419,59 @@ QCursor CaptureOverlay::cursorForSelectionHandle(SelectionHandle handle) const
 
 QPointF CaptureOverlay::clampSelectionPoint(const QPointF& point) const
 {
-    return QPointF(qBound<qreal>(0.0, point.x(), m_selectionImageRect.width()),
-                   qBound<qreal>(0.0, point.y(), m_selectionImageRect.height()));
+    const QRect selection = m_selectionModel.selectionRect();
+    return QPointF(qBound<qreal>(0.0, point.x(), selection.width()),
+                   qBound<qreal>(0.0, point.y(), selection.height()));
 }
 
 QRectF CaptureOverlay::selectionSceneRect() const
 {
-    return QRectF(QPointF(0, 0), QSizeF(m_selectionImageRect.size()));
-}
-
-QRect CaptureOverlay::boundedSelectionRect(const QRect& rect) const
-{
-    const QRect bounds(QPoint(0, 0), m_virtualGeometry.size());
-    const QRect bounded = rect.normalized().intersected(bounds);
-    if (bounded.width() < kMinimumSelectionSize || bounded.height() < kMinimumSelectionSize) {
-        return {};
-    }
-    return bounded;
+    return QRectF(QPointF(0, 0), QSizeF(m_selectionModel.selectionRect().size()));
 }
 
 void CaptureOverlay::beginMoveSelection(const QPoint& globalPos)
 {
     commitActiveTextEditing();
     clearAnnotationState();
-    m_selectionInteraction = SelectionInteraction::Moving;
-    m_initialSelectionRect = m_selectionImageRect;
-    m_pressGlobalPos = globalPos;
-    m_activeHandle = SelectionHandle::None;
+    m_selectionModel.beginMove(globalPos);
     setCursor(Qt::SizeAllCursor);
 }
 
 void CaptureOverlay::updateMoveSelection(const QPoint& globalPos)
 {
-    if (m_selectionInteraction != SelectionInteraction::Moving) {
-        return;
+    const QRect oldRect = m_selectionModel.selectionRect();
+    if (m_selectionModel.updateMove(globalPos)) {
+        applySelectionModelChange(oldRect);
     }
-
-    const QPoint delta = globalPos - m_pressGlobalPos;
-    const QRect bounds(QPoint(0, 0), m_virtualGeometry.size());
-    QPoint topLeft = m_initialSelectionRect.topLeft() + delta;
-    topLeft.setX(qBound(bounds.left(), topLeft.x(), bounds.right() - m_initialSelectionRect.width() + 1));
-    topLeft.setY(qBound(bounds.top(), topLeft.y(), bounds.bottom() - m_initialSelectionRect.height() + 1));
-    applySelectionRect(QRect(topLeft, m_initialSelectionRect.size()));
 }
 
 void CaptureOverlay::beginResizeSelection(SelectionHandle handle, const QPoint& globalPos)
 {
     commitActiveTextEditing();
     clearAnnotationState();
-    m_selectionInteraction = SelectionInteraction::Resizing;
-    m_initialSelectionRect = m_selectionImageRect;
-    m_pressGlobalPos = globalPos;
-    m_activeHandle = handle;
+    m_selectionModel.beginResize(handle, globalPos);
     setCursor(cursorForSelectionHandle(handle));
 }
 
 void CaptureOverlay::updateResizeSelection(const QPoint& globalPos)
 {
-    if (m_selectionInteraction != SelectionInteraction::Resizing || m_activeHandle == SelectionHandle::None) {
-        return;
+    const QRect oldRect = m_selectionModel.selectionRect();
+    if (m_selectionModel.updateResize(globalPos)) {
+        applySelectionModelChange(oldRect);
     }
-
-    const QPoint delta = globalPos - m_pressGlobalPos;
-    const QRect bounds(QPoint(0, 0), m_virtualGeometry.size());
-    int left = m_initialSelectionRect.left();
-    int top = m_initialSelectionRect.top();
-    int right = m_initialSelectionRect.right() + 1;
-    int bottom = m_initialSelectionRect.bottom() + 1;
-
-    const bool adjustsLeft = m_activeHandle == SelectionHandle::TopLeft
-                             || m_activeHandle == SelectionHandle::BottomLeft
-                             || m_activeHandle == SelectionHandle::Left;
-    const bool adjustsRight = m_activeHandle == SelectionHandle::TopRight
-                              || m_activeHandle == SelectionHandle::Right
-                              || m_activeHandle == SelectionHandle::BottomRight;
-    const bool adjustsTop = m_activeHandle == SelectionHandle::TopLeft
-                            || m_activeHandle == SelectionHandle::Top
-                            || m_activeHandle == SelectionHandle::TopRight;
-    const bool adjustsBottom = m_activeHandle == SelectionHandle::BottomLeft
-                               || m_activeHandle == SelectionHandle::Bottom
-                               || m_activeHandle == SelectionHandle::BottomRight;
-
-    if (adjustsLeft) {
-        left = qBound(bounds.left(), left + delta.x(), right - kMinimumSelectionSize);
-    }
-    if (adjustsRight) {
-        right = qBound(left + kMinimumSelectionSize, right + delta.x(), bounds.right() + 1);
-    }
-    if (adjustsTop) {
-        top = qBound(bounds.top(), top + delta.y(), bottom - kMinimumSelectionSize);
-    }
-    if (adjustsBottom) {
-        bottom = qBound(top + kMinimumSelectionSize, bottom + delta.y(), bounds.bottom() + 1);
-    }
-
-    applySelectionRect(QRect(QPoint(left, top), QSize(right - left, bottom - top)));
 }
 
 void CaptureOverlay::finishSelectionInteraction()
 {
-    m_selectionInteraction = SelectionInteraction::None;
-    m_activeHandle = SelectionHandle::None;
-    m_initialSelectionRect = {};
+    m_selectionModel.finishInteraction();
 }
 
 void CaptureOverlay::resizeSelectionByWheel(int pixelDelta)
 {
-    if (pixelDelta == 0 || m_selectionImageRect.isEmpty()) {
-        return;
+    const QRect oldRect = m_selectionModel.selectionRect();
+    if (m_selectionModel.resizeByWheel(pixelDelta)) {
+        applySelectionModelChange(oldRect);
     }
-
-    const QRect bounds(QPoint(0, 0), m_virtualGeometry.size());
-    int left = m_selectionImageRect.left();
-    int top = m_selectionImageRect.top();
-    int right = m_selectionImageRect.right() + 1;
-    int bottom = m_selectionImageRect.bottom() + 1;
-
-    if (pixelDelta > 0) {
-        left = qMax(bounds.left(), left - 1);
-        top = qMax(bounds.top(), top - 1);
-        right = qMin(bounds.right() + 1, right + 1);
-        bottom = qMin(bounds.bottom() + 1, bottom + 1);
-    } else {
-        if (right - left <= kMinimumSelectionSize || bottom - top <= kMinimumSelectionSize) {
-            return;
-        }
-        left = qMin(left + 1, right - kMinimumSelectionSize);
-        top = qMin(top + 1, bottom - kMinimumSelectionSize);
-        right = qMax(right - 1, left + kMinimumSelectionSize);
-        bottom = qMax(bottom - 1, top + kMinimumSelectionSize);
-    }
-
-    applySelectionRect(QRect(QPoint(left, top), QSize(right - left, bottom - top)));
 }
 
 bool CaptureOverlay::canAdjustSelectionAt(const QPoint& pos) const
@@ -606,23 +479,19 @@ bool CaptureOverlay::canAdjustSelectionAt(const QPoint& pos) const
     return hitTestSelectionHandle(pos) != SelectionHandle::None || isInsideSelection(pos);
 }
 
-void CaptureOverlay::applySelectionRect(const QRect& newRect)
+void CaptureOverlay::applySelectionModelChange(const QRect& oldRect)
 {
-    const QRect bounded = boundedSelectionRect(newRect);
-    if (bounded.isEmpty() || bounded == m_selectionImageRect) {
+    const QRect selection = m_selectionModel.selectionRect();
+    if (selection.isEmpty() || selection == oldRect) {
         return;
     }
 
-    const QRect oldRect = m_selectionImageRect;
-    const qreal dx = oldRect.left() - bounded.left();
-    const qreal dy = oldRect.top() - bounded.top();
+    const qreal dx = oldRect.left() - selection.left();
+    const qreal dy = oldRect.top() - selection.top();
     if (!qFuzzyIsNull(dx) || !qFuzzyIsNull(dy)) {
         shiftAllAnnotations(dx, dy);
     }
 
-    m_selectionImageRect = bounded;
-    m_selectionStart = bounded.topLeft();
-    m_selectionEnd = bounded.bottomRight();
     if (m_annotationScene != nullptr) {
         m_annotationScene->setSceneRect(selectionSceneRect());
     }
@@ -676,7 +545,7 @@ void CaptureOverlay::shiftAllAnnotations(qreal dx, qreal dy)
 
 void CaptureOverlay::expandSelectionToPoint(const QPoint& imagePoint)
 {
-    if (m_state != CaptureState::Editing || m_selectionImageRect.isEmpty()) {
+    if (m_state != CaptureState::Editing || m_selectionModel.selectionRect().isEmpty()) {
         return;
     }
 
@@ -685,7 +554,7 @@ void CaptureOverlay::expandSelectionToPoint(const QPoint& imagePoint)
 
     // Compute the minimal bounding rect that contains both the old selection
     // and the click point (union of old rect + click point).
-    const QRect oldRect = m_selectionImageRect;
+    const QRect oldRect = m_selectionModel.selectionRect();
     QRect expanded = oldRect;
 
     if (imagePoint.x() < oldRect.left()) {
@@ -700,17 +569,13 @@ void CaptureOverlay::expandSelectionToPoint(const QPoint& imagePoint)
         expanded.setBottom(imagePoint.y());
     }
 
-    const QRect bounded = boundedSelectionRect(expanded);
-    if (bounded.isEmpty() || bounded == oldRect) {
-        return;
-    }
+    m_selectionModel.setSelectionRect(expanded);
 
-    // Use applySelectionRect which handles:
+    // Apply the model change, which handles:
     // - shifting existing annotations to compensate for origin changes
-    // - updating m_selectionImageRect, m_selectionStart, m_selectionEnd
     // - updating scene rect, selection background, annotation view geometry
     // - repositioning toolbar and refreshing chrome
-    applySelectionRect(bounded);
+    applySelectionModelChange(oldRect);
 }
 
 void CaptureOverlay::setupAnnotationView()
@@ -749,10 +614,11 @@ void CaptureOverlay::prepareAnnotationScene()
 
 QPixmap CaptureOverlay::selectionPixmap() const
 {
-    const QRect selectionGlobal = overlayToGlobalLogical(m_selectionImageRect);
+    const QRect selection = m_selectionModel.selectionRect();
+    const QRect selectionGlobal = overlayToGlobalLogical(selection);
     const qreal effectiveDpr = effectiveDevicePixelRatio(selectionGlobal);
-    const int physW = qRound(m_selectionImageRect.width() * effectiveDpr);
-    const int physH = qRound(m_selectionImageRect.height() * effectiveDpr);
+    const int physW = qRound(selection.width() * effectiveDpr);
+    const int physH = qRound(selection.height() * effectiveDpr);
 
     QImage image(physW, physH, QImage::Format_ARGB32);
     image.fill(Qt::transparent);
@@ -772,7 +638,7 @@ QPixmap CaptureOverlay::selectionPixmap() const
         }
 
         const QRect overlapLocal = globalToOverlayLogical(overlapGlobal);
-        const QPointF targetTopLeft(overlapLocal.topLeft() - m_selectionImageRect.topLeft());
+        const QPointF targetTopLeft(overlapLocal.topLeft() - selection.topLeft());
         const QRectF targetRect(targetTopLeft, QSizeF(overlapLocal.size()));
 
         QImage sourceImage = screen.image;
@@ -787,13 +653,14 @@ QPixmap CaptureOverlay::selectionPixmap() const
 
 void CaptureOverlay::syncAnnotationViewGeometry()
 {
-    if (m_annotationView == nullptr || m_selectionImageRect.isEmpty()) {
+    const QRect selection = m_selectionModel.selectionRect();
+    if (m_annotationView == nullptr || selection.isEmpty()) {
         return;
     }
 
     m_annotationView->resetTransform();
     m_annotationView->setSceneRect(selectionSceneRect());
-    m_annotationView->setGeometry(imageToWidgetRect(m_selectionImageRect));
+    m_annotationView->setGeometry(imageToWidgetRect(selection));
     if (m_selectionChromeLayer != nullptr) {
         m_selectionChromeLayer->setGeometry(rect());
         if (m_state == CaptureState::Editing) {
@@ -895,7 +762,7 @@ void CaptureOverlay::createTextAnnotation(const QPointF& selectionPos)
 
     auto* item = new TextAnnotationItem(clampSelectionPoint(selectionPos),
                                        m_annotationPen.color());
-    const qreal remainingWidth = qMax<qreal>(1.0, m_selectionImageRect.width() - item->pos().x());
+    const qreal remainingWidth = qMax<qreal>(1.0, m_selectionModel.selectionRect().width() - item->pos().x());
     item->setMaximumTextWidth(remainingWidth);
     item->setFinishedHandler([this](TextAnnotationItem* textItem, TextAnnotationItem::FinishAction action) {
         if (textItem == m_activeTextItem) {
@@ -1030,10 +897,7 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event)
 
     const QPoint imagePoint = widgetToImage(event->position());
     if (m_state == CaptureState::Selecting) {
-        m_selectionStart = imagePoint;
-        m_selectionEnd = imagePoint;
-        m_selecting = true;
-        m_hasSelection = true;
+        m_selectionModel.beginSelection(imagePoint);
         if (m_annotationView != nullptr) {
             m_annotationView->hide();
         }
@@ -1061,19 +925,19 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event)
 
 void CaptureOverlay::mouseMoveEvent(QMouseEvent* event)
 {
-    if (m_state == CaptureState::Selecting && m_selecting) {
-        m_selectionEnd = widgetToImage(event->position());
+    if (m_state == CaptureState::Selecting && m_selectionModel.hasSelection()) {
+        m_selectionModel.updateSelection(widgetToImage(event->position()));
         update();
         return;
     }
 
     if (m_state == CaptureState::Editing && m_currentTool == CaptureTool::Select) {
         const QPoint imagePoint = widgetToImage(event->position());
-        if (m_selectionInteraction == SelectionInteraction::Moving) {
+        if (m_selectionModel.interaction() == SelectionInteraction::Moving) {
             updateMoveSelection(imagePoint);
             return;
         }
-        if (m_selectionInteraction == SelectionInteraction::Resizing) {
+        if (m_selectionModel.interaction() == SelectionInteraction::Resizing) {
             updateResizeSelection(imagePoint);
             return;
         }
@@ -1087,18 +951,14 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent* event)
         return;
     }
 
-    if (m_state == CaptureState::Selecting && m_selecting) {
-        m_selectionEnd = widgetToImage(event->position());
-        m_selecting = false;
-
-        const QRect selection = normalizedImageSelection();
-        if (selection.width() < kMinimumSelectionSize || selection.height() < kMinimumSelectionSize) {
-            m_hasSelection = false;
+    if (m_state == CaptureState::Selecting && m_selectionModel.hasSelection()) {
+        m_selectionModel.updateSelection(widgetToImage(event->position()));
+        if (!m_selectionModel.commitSelection()) {
             update();
             return;
         }
 
-        enterEditing(selection);
+        enterEditing(m_selectionModel.selectionRect());
         return;
     }
 
@@ -1140,7 +1000,7 @@ void CaptureOverlay::keyPressEvent(QKeyEvent* event)
     const bool pinModifier = control;
 #endif
     if (pinModifier && event->key() == Qt::Key_2) {
-        if (m_hasSelection && m_state == CaptureState::Editing) {
+        if (m_selectionModel.hasSelection() && m_state == CaptureState::Editing) {
             pinAndClose();
         }
         return;
@@ -1226,11 +1086,11 @@ bool CaptureOverlay::eventFilter(QObject* watched, QEvent* event)
         auto* mouseEvent = static_cast<QMouseEvent*>(event);
         if (m_currentTool == CaptureTool::Select) {
             const QPoint overlayPos = m_annotationView->viewport()->mapTo(this, mouseEvent->pos());
-            if (m_selectionInteraction == SelectionInteraction::Moving) {
+            if (m_selectionModel.interaction() == SelectionInteraction::Moving) {
                 updateMoveSelection(overlayPos);
                 return true;
             }
-            if (m_selectionInteraction == SelectionInteraction::Resizing) {
+            if (m_selectionModel.interaction() == SelectionInteraction::Resizing) {
                 updateResizeSelection(overlayPos);
                 return true;
             }
@@ -1273,7 +1133,8 @@ bool CaptureOverlay::eventFilter(QObject* watched, QEvent* event)
 
 void CaptureOverlay::updateToolbarGeometry()
 {
-    if (m_toolbar == nullptr || m_state != CaptureState::Editing || m_selectionImageRect.isEmpty()) {
+    const QRect selection = m_selectionModel.selectionRect();
+    if (m_toolbar == nullptr || m_state != CaptureState::Editing || selection.isEmpty()) {
         if (m_toolbar != nullptr) {
             m_toolbar->hide();
         }
@@ -1282,7 +1143,7 @@ void CaptureOverlay::updateToolbarGeometry()
 
     m_toolbar->adjustSize();
     const QSize toolbarSize = m_toolbar->sizeHint();
-    const QRect widgetSelection = imageToWidgetRect(m_selectionImageRect);
+    const QRect widgetSelection = imageToWidgetRect(selection);
     int x = widgetSelection.x() + widgetSelection.width() - toolbarSize.width();
     int y = widgetSelection.bottom() + kToolbarGap;
 
@@ -1359,9 +1220,7 @@ void CaptureOverlay::reselect()
 {
     clearAnnotationsAndHistory();
     m_state = CaptureState::Selecting;
-    m_hasSelection = false;
-    m_selecting = false;
-    m_selectionImageRect = {};
+    m_selectionModel.clear();
     m_toolbar->hide();
     update();
 }
@@ -1376,7 +1235,7 @@ void CaptureOverlay::pinAndClose()
         return;
     }
 
-    const QRect selectionGlobal = overlayToGlobalLogical(m_selectionImageRect);
+    const QRect selectionGlobal = overlayToGlobalLogical(m_selectionModel.selectionRect());
 
     Q_EMIT pinRequested(result, selectionGlobal);
 
