@@ -75,6 +75,7 @@ public:
 
 signals:
     void canceled();
+    void pinRequested(const QImage& image, const QRect& sourceGlobalRect);
 
 protected:
     void paintEvent(QPaintEvent* event) override;

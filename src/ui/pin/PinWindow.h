@@ -42,6 +42,14 @@ public:
 
     void setActive(bool active);
 
+    /// Returns the visual active state of the content widget (for testing).
+    [[nodiscard]] bool isActiveVisual() const;
+
+signals:
+    void focusActivated(PinWindow* pinWindow);
+    void focusDeactivated(PinWindow* pinWindow);
+    void aboutToClose(PinWindow* pinWindow);
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void showEvent(QShowEvent* event) override;

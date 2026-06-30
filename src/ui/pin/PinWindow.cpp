@@ -221,6 +221,11 @@ void PinWindow::setActive(bool active)
     }
 }
 
+bool PinWindow::isActiveVisual() const
+{
+    return m_contentWidget != nullptr && m_contentWidget->isActive();
+}
+
 QRect PinWindow::availableGeometryFor(const QPoint& globalPos) const
 {
     QScreen* targetScreen = QGuiApplication::screenAt(globalPos);
@@ -457,18 +462,13 @@ void PinWindow::leaveEvent(QEvent* event)
 void PinWindow::focusInEvent(QFocusEvent* event)
 {
     QWidget::focusInEvent(event);
-    if (m_contentWidget) {
-        m_contentWidget->setActive(true);
-    }
+    Q_EMIT focusActivated(this);
 }
 
 void PinWindow::focusOutEvent(QFocusEvent* event)
 {
     QWidget::focusOutEvent(event);
-    // Keep active if mouse is still hovering, even when focus is lost
-    if (m_contentWidget && !m_hovered) {
-        m_contentWidget->setActive(false);
-    }
+    Q_EMIT focusDeactivated(this);
 }
 
 void PinWindow::mousePressEvent(QMouseEvent* event)
@@ -545,7 +545,10 @@ void PinWindow::contextMenuEvent(QContextMenuEvent* event)
 
 void PinWindow::closeEvent(QCloseEvent* event)
 {
+    Q_EMIT aboutToClose(this);
+
     QWidget::closeEvent(event);
+
     if (!m_closing) {
         m_closing = true;
         deleteLater();

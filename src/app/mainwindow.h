@@ -2,14 +2,12 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QPointer>
 
-class CaptureOverlay;
 class QCloseEvent;
-class QMenu;
-class QSystemTrayIcon;
-class Hotkey;
-class QString;
+class CaptureController;
+class HotkeyController;
+class PinWindowManager;
+class TrayController;
 
 class MainWindow : public QMainWindow
 {
@@ -24,19 +22,13 @@ protected:
 
 private:
     void setupCentralWidget();
-    void setupTrayIcon();
-    void registerHotkeys();
-    void handleHotkeyRegistrationFailure(const QString& shortcut, const QString& reason);
-    void startRegionCapture();
-    void showOverlay(CaptureOverlay* overlay);
-    void showCaptureUnavailable();
     void showMainWindow();
     void quitApplication();
 
-    QSystemTrayIcon* m_trayIcon = nullptr;
-    QMenu* m_trayMenu = nullptr;
-    Hotkey* m_regionHotkey = nullptr;
-    QPointer<CaptureOverlay> m_activeOverlay;
+    TrayController* m_trayController = nullptr;
+    CaptureController* m_captureController = nullptr;
+    HotkeyController* m_hotkeyController = nullptr;
+    PinWindowManager* m_pinWindowManager = nullptr;
     bool m_isQuitting = false;
 };
 #endif // MAINWINDOW_H

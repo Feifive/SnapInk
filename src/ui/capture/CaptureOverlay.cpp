@@ -2,7 +2,6 @@
 
 #include "AddAnnotationCommand.h"
 #include "CaptureToolbar.h"
-#include "../pin/PinWindow.h"
 #include "../../core/clipboard/ClipboardService.h"
 #include "../../core/hotkey/HotkeyConfig.h"
 
@@ -1379,10 +1378,7 @@ void CaptureOverlay::pinAndClose()
 
     const QRect selectionGlobal = overlayToGlobalLogical(m_selectionImageRect);
 
-    auto* pinWindow = new PinWindow(result, selectionGlobal);
-    pinWindow->show();
-    pinWindow->raise();
-    pinWindow->setActive(true);
+    Q_EMIT pinRequested(result, selectionGlobal);
 
     m_state = CaptureState::Finished;
     close();

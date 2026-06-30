@@ -25,6 +25,10 @@ set(SNAPINK_CAPTURE_SOURCES
     src/ui/capture/CaptureTool.h
     src/ui/pin/PinWindow.cpp
     src/ui/pin/PinWindow.h
+    src/ui/pin/PinWindowManager.cpp
+    src/ui/pin/PinWindowManager.h
+    src/ui/tray/TrayController.cpp
+    src/ui/tray/TrayController.h
 )
 
 set(SNAPINK_MACOS_SOURCES)
@@ -46,6 +50,10 @@ endif()
 qt_add_executable(SnapInk
     WIN32 MACOSX_BUNDLE
     main.cpp
+    src/app/CaptureController.cpp
+    src/app/CaptureController.h
+    src/app/HotkeyController.cpp
+    src/app/HotkeyController.h
     src/app/mainwindow.cpp
     src/app/mainwindow.h
     src/core/hotkey/Hotkey.cpp
@@ -106,6 +114,10 @@ enable_testing()
 
 qt_add_executable(SnapInkTests
     tests/capture_overlay_tests.cpp
+    src/app/CaptureController.cpp
+    src/app/CaptureController.h
+    src/app/HotkeyController.cpp
+    src/app/HotkeyController.h
     src/app/mainwindow.cpp
     src/app/mainwindow.h
     src/core/hotkey/Hotkey.cpp
