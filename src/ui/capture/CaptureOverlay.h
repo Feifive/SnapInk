@@ -1,7 +1,7 @@
 #ifndef CAPTUREOVERLAY_H
 #define CAPTUREOVERLAY_H
 
-#include "CaptureAnnotation.h"
+#include "AnnotationSceneController.h"
 #include "CaptureSelectionModel.h"
 #include "CaptureTool.h"
 #include "../../core/capture/CaptureImageComposer.h"
@@ -9,18 +9,13 @@
 
 #include <QCursor>
 #include <QImage>
-#include <QPainterPath>
 #include <QRect>
-#include <QUndoStack>
 #include <QWidget>
 
 class CaptureToolbar;
 class QGraphicsItem;
-class QGraphicsPixmapItem;
-class QGraphicsScene;
 class QGraphicsView;
 class QPainter;
-class TextAnnotationItem;
 class QWidget;
 
 enum class CaptureState
@@ -44,6 +39,7 @@ public:
     CaptureOverlay(CaptureResult captureResult,
                    const QRect& virtualGeometry,
                    QWidget* parent = nullptr);
+    ~CaptureOverlay() override;
 
     CaptureState state() const;
     void enterEditing(const QRect& imageRect);
@@ -53,7 +49,7 @@ public:
     void undo();
     void redo();
 
-    QImage renderResultImage() const;
+    QImage renderResultImage();
 
 signals:
     void canceled();
@@ -106,15 +102,8 @@ private:
     void setupAnnotationView();
     void prepareAnnotationScene();
     void syncAnnotationViewGeometry();
-    void beginAnnotation(const QPointF& selectionPos);
-    void updateAnnotation(const QPointF& selectionPos);
-    void finishAnnotation(const QPointF& selectionPos);
-    void createTextAnnotation(const QPointF& selectionPos);
-    void finishActiveTextEditing(TextAnnotationItem::FinishAction action);
-    void commitActiveTextEditing();
-    bool previewIsLargeEnough() const;
-    void clearAnnotationState();
     void clearAnnotationsAndHistory();
+    void syncUndoRedoAvailability();
 
     // ----- painting -----------------------------------------------------------
     void paintBackground(QPainter& painter) const;
@@ -140,20 +129,9 @@ private:
     CaptureSelectionModel m_selectionModel;
     CaptureImageComposer m_imageComposer;
     CaptureState m_state = CaptureState::Selecting;
-    QUndoStack m_undoStack;
     CaptureToolbar* m_toolbar = nullptr;
-    QGraphicsView* m_annotationView = nullptr;
-    QGraphicsScene* m_annotationScene = nullptr;
-    QGraphicsPixmapItem* m_selectionPixmapItem = nullptr;
-    QGraphicsItem* m_previewItem = nullptr;
-    TextAnnotationItem* m_activeTextItem = nullptr;
+    AnnotationSceneController m_annotationController;
     QWidget* m_selectionChromeLayer = nullptr;
-    CaptureTool m_currentTool = CaptureTool::Select;
-    QPen m_annotationPen = QPen(Qt::red, 3.0);
-    QPointF m_annotationStart;
-    QPainterPath m_activePath;
-    int m_penPointCount = 0;
-    bool m_drawingAnnotation = false;
 };
 
 #endif // CAPTUREOVERLAY_H
