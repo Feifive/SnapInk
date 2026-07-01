@@ -907,8 +907,27 @@ void CaptureOverlay::resetEditingSession()
     syncUndoRedoAvailability();
 }
 
+bool CaptureOverlay::terminalActionHasStarted() const
+{
+    return m_terminalActionStarted;
+}
+
+bool CaptureOverlay::beginTerminalAction()
+{
+    if (m_terminalActionStarted || m_state == CaptureState::Finished || m_state == CaptureState::Canceled) {
+        return false;
+    }
+
+    m_terminalActionStarted = true;
+    return true;
+}
+
 void CaptureOverlay::transitionToSelecting()
 {
+    if (terminalActionHasStarted()) {
+        return;
+    }
+
     m_state = CaptureState::Selecting;
     finishSelectionInteraction();
     m_selectionModel.clear();
@@ -962,6 +981,10 @@ void CaptureOverlay::transitionToFinished()
 
 void CaptureOverlay::transitionToCanceled()
 {
+    if (terminalActionHasStarted()) {
+        return;
+    }
+
     if (m_state == CaptureState::Finished) {
         return;
     }
@@ -983,8 +1006,16 @@ void CaptureOverlay::transitionToCanceled()
 
 void CaptureOverlay::copyAndClose()
 {
+    if (terminalActionHasStarted()) {
+        return;
+    }
+
     const QImage result = buildResultImageForAction();
     if (result.isNull()) {
+        return;
+    }
+
+    if (!beginTerminalAction()) {
         return;
     }
 
@@ -994,6 +1025,10 @@ void CaptureOverlay::copyAndClose()
 
 void CaptureOverlay::saveAndClose()
 {
+    if (terminalActionHasStarted()) {
+        return;
+    }
+
     const QImage result = buildResultImageForAction();
     if (result.isNull()) {
         return;
@@ -1006,6 +1041,10 @@ void CaptureOverlay::saveAndClose()
 
     if (!saveResultImage(result, fileName)) {
         showSaveFailedMessage();
+        return;
+    }
+
+    if (!beginTerminalAction()) {
         return;
     }
 
@@ -1024,6 +1063,10 @@ void CaptureOverlay::reselect()
 
 void CaptureOverlay::pinAndClose()
 {
+    if (terminalActionHasStarted()) {
+        return;
+    }
+
     const QImage result = buildResultImageForAction();
     if (result.isNull()) {
         showPinFailedMessage();
@@ -1032,6 +1075,10 @@ void CaptureOverlay::pinAndClose()
 
     const QRect selectionGlobal =
         m_imageComposer.overlayLocalToGlobalLogical(m_selectionModel.selectionRect());
+
+    if (!beginTerminalAction()) {
+        return;
+    }
 
     Q_EMIT pinRequested(result, selectionGlobal);
 

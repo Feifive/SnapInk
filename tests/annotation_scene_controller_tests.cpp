@@ -62,7 +62,7 @@ private slots:
     void shiftAllAnnotationsMovesCommittedItems();
     void shiftAllAnnotationsDoesNotMoveBackground();
     void previewItemIsExcludedFromRender();
-    void renderCommitsActiveTextEditing();
+    void renderSceneDoesNotCommitActiveTextEditing();
     void clearAllResetsSceneInteractionStateAndUndoStack();
 };
 
@@ -231,7 +231,7 @@ void AnnotationSceneControllerTests::previewItemIsExcludedFromRender()
     QVERIFY(controller.hasActivePreview());
 }
 
-void AnnotationSceneControllerTests::renderCommitsActiveTextEditing()
+void AnnotationSceneControllerTests::renderSceneDoesNotCommitActiveTextEditing()
 {
     AnnotationSceneController controller;
     controller.setSceneRect(QRectF(0.0, 0.0, 80.0, 60.0));
@@ -243,8 +243,8 @@ void AnnotationSceneControllerTests::renderCommitsActiveTextEditing()
     const QImage image = renderController(controller, QSize(80, 60));
 
     QVERIFY(!image.isNull());
-    QVERIFY(controller.canUndo());
-    QVERIFY(!controller.hasActiveTextEditing());
+    QVERIFY(!controller.canUndo());
+    QVERIFY(controller.hasActiveTextEditing());
     QCOMPARE(itemsOfType<TextAnnotationItem>(controller.scene()).size(), 1);
 }
 

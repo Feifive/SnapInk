@@ -139,6 +139,8 @@ private:
     void transitionToCanceled();
     void resetEditingUi();
     void resetEditingSession();
+    bool terminalActionHasStarted() const;
+    bool beginTerminalAction();
 
     // ----- data members -------------------------------------------------------
     CaptureResult m_captureResult;
@@ -151,6 +153,7 @@ private:
     CaptureToolbar* m_toolbar = nullptr;
     QWidget* m_selectionChromeLayer = nullptr;
     bool m_canceledSignalEmitted = false;
+    bool m_terminalActionStarted = false;
 };
 
 #endif // CAPTUREOVERLAY_H

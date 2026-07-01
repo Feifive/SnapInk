@@ -318,8 +318,6 @@ void AnnotationSceneController::renderScene(QPainter* painter,
         return;
     }
 
-    commitActiveTextEditing();
-
     const bool hadPreview = m_previewItem != nullptr && m_previewItem->scene() == m_scene.get();
     QGraphicsItem* previewItem = m_previewItem;
     if (hadPreview) {

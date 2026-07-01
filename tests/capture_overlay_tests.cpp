@@ -231,6 +231,7 @@ private slots:
     void saveActionCancelKeepsEditingSession();
     void saveActionFailureKeepsEditingSession();
     void pinActionEmitsImageSourceRectAndTransitionsToFinished();
+    void pinActionIgnoresSynchronousReentry();
     void pinActionFailureKeepsEditingSession();
     void reselectClearsEditingSessionAndUi();
     void escapeCancelsSelectingAndEditingButCommitsActiveText();
@@ -509,6 +510,31 @@ void CaptureOverlayTests::pinActionEmitsImageSourceRectAndTransitionsToFinished(
     QVERIFY(!pinnedImage.isNull());
     QCOMPARE(pinnedImage.size(), QSize(40, 30));
     QCOMPARE(sourceRect, QRect(-30, -10, 40, 30));
+    QCOMPARE(overlay.state(), CaptureState::Finished);
+    QVERIFY(!overlay.isVisible());
+}
+
+void CaptureOverlayTests::pinActionIgnoresSynchronousReentry()
+{
+    TestableCaptureOverlay overlay(makeSingleScreenResult(100, 80), QRect(0, 0, 100, 80));
+    overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+    overlay.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&overlay));
+    overlay.enterEditing(QRect(10, 10, 40, 30));
+    QSignalSpy pinSpy(&overlay, &CaptureOverlay::pinRequested);
+
+    int reentryAttempts = 0;
+    connect(&overlay, &CaptureOverlay::pinRequested, &overlay, [&overlay, &reentryAttempts]() {
+        ++reentryAttempts;
+        if (reentryAttempts == 1) {
+            triggerToolbarPin(overlay);
+        }
+    });
+
+    triggerToolbarPin(overlay);
+
+    QCOMPARE(reentryAttempts, 1);
+    QCOMPARE(pinSpy.count(), 1);
     QCOMPARE(overlay.state(), CaptureState::Finished);
     QVERIFY(!overlay.isVisible());
 }
