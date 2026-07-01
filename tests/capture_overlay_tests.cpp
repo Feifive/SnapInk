@@ -17,6 +17,7 @@
 #include <QGraphicsPixmapItem>
 #include <QGraphicsScene>
 #include <QGraphicsView>
+#include <QLabel>
 #include <QMenu>
 #include <QPointer>
 #include <QScreen>
@@ -275,6 +276,14 @@ private slots:
     void pinWindowInitialPositionUsesSourceGlobalRect();
     void pinWindowSmallImageNotUpscaled();
     void pinWindowResizeConstraintDoesNotUpscaleNormalSize();
+    void pinWindowWheelScalesByTenPercentAndShowsIndicator();
+    void pinWindowAltWheelScalesByOnePercentAndShowsIndicator();
+    void pinWindowWheelChangesScaleByFixedTenPercentagePoints();
+    void pinWindowAltWheelChangesScaleByFixedOnePercentagePoint();
+    void pinWindowWheelDoesNotForceSmallImageToMinimumResizeExtent();
+    void pinWindowDragResizeDoesNotForceSmallImageToMinimumResizeExtent();
+    void pinWindowCommandWheelChangesOpacityByFivePercentAndShowsIndicator();
+    void pinWindowCommandWheelLargeDeltaChangesOpacityBySingleFivePercentStep();
     void pinToolbarPinPlacesWindowAtSelectionGlobalPosition();
 
     // New shadow margin and size semantics tests
@@ -333,6 +342,7 @@ private slots:
 
     // MainWindow integration tests
     void mainWindowTrayForwardsToCaptureController();
+    void mainWindowRestorePinHotkeyRestoresLastClosedPin();
     void mainWindowNoHotkeyRegistrationWhenDisabled();
 
     // PinWindowManager tests
@@ -344,6 +354,10 @@ private slots:
     void pinWindowManagerCloseNonActivePin();
     void pinWindowManagerManualActivateUpdatesOrder();
     void pinWindowManagerBatchClose();
+    void pinWindowManagerRestoreLastClosedPin();
+    void pinWindowManagerRestoreClosedPinsInLifoOrder();
+    void pinWindowManagerKeepsOnlyTenClosedPins();
+    void pinWindowManagerRestorePreservesSizeAndOpacity();
     void pinWindowManagerFocusDeactivateClearsActive();
     void pinWindowManagerCloseAfterFocusLossDoesNotAutoActivate();
 };
@@ -1288,6 +1302,278 @@ void CaptureOverlayTests::pinWindowResizeConstraintDoesNotUpscaleNormalSize()
     // Small image with large available - should remain small, not upscaled.
     const QSize smallBounded = PinWindow::boundedImageSize(QSize(80, 50), largeAvailable);
     QCOMPARE(smallBounded, QSize(80, 50));
+}
+
+void CaptureOverlayTests::pinWindowWheelScalesByTenPercentAndShowsIndicator()
+{
+    QImage image(200, 100, QImage::Format_ARGB32);
+    image.fill(Qt::white);
+
+    auto* window = new PinWindow(image, QRect(100, 100, 200, 100));
+    QPointer<PinWindow> guard(window);
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    window->clearFocus();
+
+    QWheelEvent wheelEvent(QPointF(80, 50),
+                           window->mapToGlobal(QPoint(80, 50)),
+                           QPoint(),
+                           QPoint(0, 120),
+                           Qt::NoButton,
+                           Qt::NoModifier,
+                           Qt::NoScrollPhase,
+                           false);
+    QApplication::sendEvent(window, &wheelEvent);
+
+    constexpr int kMargin = 18;
+    QCOMPARE(window->size(), QSize(qRound(200 * 1.10) + kMargin * 2,
+                                   qRound(100 * 1.10) + kMargin * 2));
+    auto* indicator = window->findChild<QLabel*>(QStringLiteral("PinScaleIndicator"));
+    QVERIFY(indicator != nullptr);
+    QVERIFY(indicator->isVisible());
+    QCOMPARE(indicator->text(), QStringLiteral("缩放：110%"));
+
+    QTRY_VERIFY(!indicator->isVisible());
+
+    window->close();
+    QTRY_VERIFY(guard.isNull());
+}
+
+void CaptureOverlayTests::pinWindowAltWheelScalesByOnePercentAndShowsIndicator()
+{
+    QImage image(200, 100, QImage::Format_ARGB32);
+    image.fill(Qt::white);
+
+    auto* window = new PinWindow(image, QRect(100, 100, 200, 100));
+    QPointer<PinWindow> guard(window);
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    window->clearFocus();
+
+    QWheelEvent wheelEvent(QPointF(80, 50),
+                           window->mapToGlobal(QPoint(80, 50)),
+                           QPoint(),
+                           QPoint(0, 120),
+                           Qt::NoButton,
+                           Qt::AltModifier,
+                           Qt::NoScrollPhase,
+                           false);
+    QApplication::sendEvent(window, &wheelEvent);
+
+    constexpr int kMargin = 18;
+    QCOMPARE(window->size(), QSize(qRound(200 * 1.01) + kMargin * 2,
+                                   qRound(100 * 1.01) + kMargin * 2));
+    auto* indicator = window->findChild<QLabel*>(QStringLiteral("PinScaleIndicator"));
+    QVERIFY(indicator != nullptr);
+    QVERIFY(indicator->isVisible());
+    QCOMPARE(indicator->text(), QStringLiteral("缩放：101%"));
+
+    window->close();
+    QTRY_VERIFY(guard.isNull());
+}
+
+void CaptureOverlayTests::pinWindowWheelChangesScaleByFixedTenPercentagePoints()
+{
+    QImage image(200, 100, QImage::Format_ARGB32);
+    image.fill(Qt::white);
+
+    auto* window = new PinWindow(image, QRect(100, 100, 200, 100));
+    QPointer<PinWindow> guard(window);
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+
+    for (int i = 0; i < 2; ++i) {
+        QWheelEvent wheelEvent(QPointF(80, 50),
+                               window->mapToGlobal(QPoint(80, 50)),
+                               QPoint(),
+                               QPoint(0, 120),
+                               Qt::NoButton,
+                               Qt::NoModifier,
+                               Qt::NoScrollPhase,
+                               false);
+        QApplication::sendEvent(window, &wheelEvent);
+    }
+
+    constexpr int kMargin = 18;
+    QCOMPARE(window->size(), QSize(qRound(200 * 1.20) + kMargin * 2,
+                                   qRound(100 * 1.20) + kMargin * 2));
+    auto* indicator = window->findChild<QLabel*>(QStringLiteral("PinScaleIndicator"));
+    QVERIFY(indicator != nullptr);
+    QCOMPARE(indicator->text(), QStringLiteral("缩放：120%"));
+
+    window->close();
+    QTRY_VERIFY(guard.isNull());
+}
+
+void CaptureOverlayTests::pinWindowAltWheelChangesScaleByFixedOnePercentagePoint()
+{
+    QImage image(200, 100, QImage::Format_ARGB32);
+    image.fill(Qt::white);
+
+    auto* window = new PinWindow(image, QRect(100, 100, 200, 100));
+    QPointer<PinWindow> guard(window);
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+
+    for (int i = 0; i < 2; ++i) {
+        QWheelEvent wheelEvent(QPointF(80, 50),
+                               window->mapToGlobal(QPoint(80, 50)),
+                               QPoint(),
+                               QPoint(0, 120),
+                               Qt::NoButton,
+                               Qt::AltModifier,
+                               Qt::NoScrollPhase,
+                               false);
+        QApplication::sendEvent(window, &wheelEvent);
+    }
+
+    constexpr int kMargin = 18;
+    QCOMPARE(window->size(), QSize(qRound(200 * 1.02) + kMargin * 2,
+                                   qRound(100 * 1.02) + kMargin * 2));
+    auto* indicator = window->findChild<QLabel*>(QStringLiteral("PinScaleIndicator"));
+    QVERIFY(indicator != nullptr);
+    QCOMPARE(indicator->text(), QStringLiteral("缩放：102%"));
+
+    window->close();
+    QTRY_VERIFY(guard.isNull());
+}
+
+void CaptureOverlayTests::pinWindowWheelDoesNotForceSmallImageToMinimumResizeExtent()
+{
+    QImage image(80, 50, QImage::Format_ARGB32);
+    image.fill(Qt::white);
+
+    auto* window = new PinWindow(image, QRect(100, 100, 80, 50));
+    QPointer<PinWindow> guard(window);
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+
+    QWheelEvent wheelEvent(QPointF(40, 25),
+                           window->mapToGlobal(QPoint(40, 25)),
+                           QPoint(),
+                           QPoint(0, -120),
+                           Qt::NoButton,
+                           Qt::NoModifier,
+                           Qt::NoScrollPhase,
+                           false);
+    QApplication::sendEvent(window, &wheelEvent);
+
+    constexpr int kMargin = 18;
+    QCOMPARE(window->size(), QSize(qRound(80 * 0.90) + kMargin * 2,
+                                   qRound(50 * 0.90) + kMargin * 2));
+    auto* indicator = window->findChild<QLabel*>(QStringLiteral("PinScaleIndicator"));
+    QVERIFY(indicator != nullptr);
+    QCOMPARE(indicator->text(), QStringLiteral("缩放：90%"));
+
+    window->close();
+    QTRY_VERIFY(guard.isNull());
+}
+
+void CaptureOverlayTests::pinWindowDragResizeDoesNotForceSmallImageToMinimumResizeExtent()
+{
+    QImage image(80, 50, QImage::Format_ARGB32);
+    image.fill(Qt::white);
+
+    auto* window = new PinWindow(image, QRect(100, 100, 80, 50));
+    QPointer<PinWindow> guard(window);
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+
+    const QPoint pressLocal(window->width() - 2, window->height() / 2);
+    const QPoint pressGlobal = window->mapToGlobal(pressLocal);
+    QMouseEvent pressEvent(QEvent::MouseButtonPress,
+                           QPointF(pressLocal),
+                           QPointF(pressGlobal),
+                           Qt::LeftButton,
+                           Qt::LeftButton,
+                           Qt::NoModifier);
+    QApplication::sendEvent(window, &pressEvent);
+
+    const QPoint moveLocal = pressLocal - QPoint(8, 0);
+    const QPoint moveGlobal = pressGlobal - QPoint(8, 0);
+    QMouseEvent moveEvent(QEvent::MouseMove,
+                          QPointF(moveLocal),
+                          QPointF(moveGlobal),
+                          Qt::NoButton,
+                          Qt::LeftButton,
+                          Qt::NoModifier);
+    QApplication::sendEvent(window, &moveEvent);
+
+    QMouseEvent releaseEvent(QEvent::MouseButtonRelease,
+                             QPointF(moveLocal),
+                             QPointF(moveGlobal),
+                             Qt::LeftButton,
+                             Qt::NoButton,
+                             Qt::NoModifier);
+    QApplication::sendEvent(window, &releaseEvent);
+
+    constexpr int kMargin = 18;
+    QCOMPARE(window->size(), QSize(72 + kMargin * 2, 45 + kMargin * 2));
+
+    window->close();
+    QTRY_VERIFY(guard.isNull());
+}
+
+void CaptureOverlayTests::pinWindowCommandWheelChangesOpacityByFivePercentAndShowsIndicator()
+{
+    QImage image(200, 100, QImage::Format_ARGB32);
+    image.fill(Qt::white);
+
+    auto* window = new PinWindow(image, QRect(100, 100, 200, 100));
+    QPointer<PinWindow> guard(window);
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    window->clearFocus();
+
+    QWheelEvent wheelEvent(QPointF(80, 50),
+                           window->mapToGlobal(QPoint(80, 50)),
+                           QPoint(),
+                           QPoint(0, -120),
+                           Qt::NoButton,
+                           Qt::ControlModifier,
+                           Qt::NoScrollPhase,
+                           false);
+    QApplication::sendEvent(window, &wheelEvent);
+
+    QCOMPARE(qRound(window->windowOpacity() * 100.0), 95);
+    auto* indicator = window->findChild<QLabel*>(QStringLiteral("PinScaleIndicator"));
+    QVERIFY(indicator != nullptr);
+    QVERIFY(indicator->isVisible());
+    QCOMPARE(indicator->text(), QStringLiteral("不透明度：95%"));
+
+    QTRY_VERIFY(!indicator->isVisible());
+
+    window->close();
+    QTRY_VERIFY(guard.isNull());
+}
+
+void CaptureOverlayTests::pinWindowCommandWheelLargeDeltaChangesOpacityBySingleFivePercentStep()
+{
+    QImage image(200, 100, QImage::Format_ARGB32);
+    image.fill(Qt::white);
+
+    auto* window = new PinWindow(image, QRect(100, 100, 200, 100));
+    QPointer<PinWindow> guard(window);
+    window->show();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+
+    QWheelEvent wheelEvent(QPointF(80, 50),
+                           window->mapToGlobal(QPoint(80, 50)),
+                           QPoint(),
+                           QPoint(0, -240),
+                           Qt::NoButton,
+                           Qt::ControlModifier,
+                           Qt::NoScrollPhase,
+                           false);
+    QApplication::sendEvent(window, &wheelEvent);
+
+    QCOMPARE(qRound(window->windowOpacity() * 100.0), 95);
+    auto* indicator = window->findChild<QLabel*>(QStringLiteral("PinScaleIndicator"));
+    QVERIFY(indicator != nullptr);
+    QCOMPARE(indicator->text(), QStringLiteral("不透明度：95%"));
+
+    window->close();
+    QTRY_VERIFY(guard.isNull());
 }
 
 void CaptureOverlayTests::pinToolbarPinPlacesWindowAtSelectionGlobalPosition()
@@ -2241,6 +2527,35 @@ void CaptureOverlayTests::mainWindowTrayForwardsToCaptureController()
     QVERIFY(trayController->regionCaptureAction() != nullptr);
 }
 
+void CaptureOverlayTests::mainWindowRestorePinHotkeyRestoresLastClosedPin()
+{
+    MainWindow window(nullptr, false);
+
+    auto* hotkeyController = window.findChild<HotkeyController*>();
+    QVERIFY(hotkeyController != nullptr);
+
+    auto* pinManager = window.findChild<PinWindowManager*>();
+    QVERIFY(pinManager != nullptr);
+
+    QImage img(100, 70, QImage::Format_ARGB32);
+    img.fill(Qt::white);
+    PinWindow* pin = pinManager->createPin(img, QRect(120, 120, 100, 70));
+    QVERIFY(pin != nullptr);
+
+    pin->close();
+    QCoreApplication::processEvents();
+    QTRY_COMPARE(pinManager->pinCount(), 0);
+
+    Q_EMIT hotkeyController->restorePinRequested();
+    QCoreApplication::processEvents();
+
+    QCOMPARE(pinManager->pinCount(), 1);
+    QVERIFY(pinManager->activePin() != nullptr);
+
+    pinManager->closeAllPins();
+    QCoreApplication::processEvents();
+}
+
 void CaptureOverlayTests::mainWindowNoHotkeyRegistrationWhenDisabled()
 {
     MainWindow window(nullptr, false);
@@ -2462,6 +2777,140 @@ void CaptureOverlayTests::pinWindowManagerBatchClose()
     QTRY_VERIFY(guardA.isNull());
     QTRY_VERIFY(guardB.isNull());
     QTRY_VERIFY(guardC.isNull());
+}
+
+void CaptureOverlayTests::pinWindowManagerRestoreLastClosedPin()
+{
+    PinWindowManager manager;
+    QImage img = makeTestPinImage(90, 60);
+    const QRect sourceRect(100, 100, 90, 60);
+
+    PinWindow* pin = manager.createPin(img, sourceRect);
+    QVERIFY(pin != nullptr);
+    pin->close();
+    QCoreApplication::processEvents();
+    QTRY_COMPARE(manager.pinCount(), 0);
+
+    PinWindow* restored = manager.restoreLastClosedPin();
+    QVERIFY(restored != nullptr);
+    QCOMPARE(manager.pinCount(), 1);
+    QCOMPARE(manager.activePin(), restored);
+    QVERIFY(restored->isActiveVisual());
+
+    restored->close();
+    QCoreApplication::processEvents();
+}
+
+void CaptureOverlayTests::pinWindowManagerRestoreClosedPinsInLifoOrder()
+{
+    PinWindowManager manager;
+    QImage imgA = makeTestPinImage(80, 50);
+    QImage imgB = makeTestPinImage(120, 70);
+
+    PinWindow* pinA = manager.createPin(imgA, QRect(100, 100, 80, 50));
+    PinWindow* pinB = manager.createPin(imgB, QRect(140, 140, 120, 70));
+    QVERIFY(pinA != nullptr);
+    QVERIFY(pinB != nullptr);
+
+    pinA->close();
+    QCoreApplication::processEvents();
+    pinB->close();
+    QCoreApplication::processEvents();
+    QTRY_COMPARE(manager.pinCount(), 0);
+
+    PinWindow* restoredB = manager.restoreLastClosedPin();
+    QVERIFY(restoredB != nullptr);
+    constexpr int kMargin = 18;
+    QCOMPARE(restoredB->size(), QSize(120 + kMargin * 2, 70 + kMargin * 2));
+
+    PinWindow* restoredA = manager.restoreLastClosedPin();
+    QVERIFY(restoredA != nullptr);
+    QCOMPARE(restoredA->size(), QSize(80 + kMargin * 2, 50 + kMargin * 2));
+
+    restoredB->close();
+    restoredA->close();
+    QCoreApplication::processEvents();
+}
+
+void CaptureOverlayTests::pinWindowManagerKeepsOnlyTenClosedPins()
+{
+    PinWindowManager manager;
+
+    for (int i = 0; i < 11; ++i) {
+        const int width = 70 + i;
+        QImage img = makeTestPinImage(width, 40);
+        PinWindow* pin = manager.createPin(img, QRect(100 + i, 100 + i, width, 40));
+        QVERIFY(pin != nullptr);
+        pin->close();
+        QCoreApplication::processEvents();
+    }
+    QTRY_COMPARE(manager.pinCount(), 0);
+
+    int restoredCount = 0;
+    QList<PinWindow*> restoredPins;
+    for (int i = 0; i < 10; ++i) {
+        PinWindow* restored = manager.restoreLastClosedPin();
+        QVERIFY(restored != nullptr);
+        restoredPins.append(restored);
+        ++restoredCount;
+    }
+
+    QCOMPARE(restoredCount, 10);
+    QVERIFY(manager.restoreLastClosedPin() == nullptr);
+
+    for (PinWindow* pin : restoredPins) {
+        pin->close();
+    }
+    QCoreApplication::processEvents();
+}
+
+void CaptureOverlayTests::pinWindowManagerRestorePreservesSizeAndOpacity()
+{
+    PinWindowManager manager;
+    QImage img = makeTestPinImage(100, 60);
+
+    PinWindow* pin = manager.createPin(img, QRect(100, 100, 100, 60));
+    QVERIFY(pin != nullptr);
+
+    QWheelEvent scaleEvent(QPointF(50, 30),
+                           pin->mapToGlobal(QPoint(50, 30)),
+                           QPoint(),
+                           QPoint(0, 120),
+                           Qt::NoButton,
+                           Qt::NoModifier,
+                           Qt::NoScrollPhase,
+                           false);
+    QApplication::sendEvent(pin, &scaleEvent);
+
+    QWheelEvent opacityEvent(QPointF(50, 30),
+                             pin->mapToGlobal(QPoint(50, 30)),
+                             QPoint(),
+                             QPoint(0, -120),
+                             Qt::NoButton,
+#ifdef Q_OS_MACOS
+                             Qt::ControlModifier,
+#else
+                             Qt::MetaModifier,
+#endif
+                             Qt::NoScrollPhase,
+                             false);
+    QApplication::sendEvent(pin, &opacityEvent);
+
+    const QSize closedSize = pin->size();
+    const int closedOpacity = qRound(pin->windowOpacity() * 100.0);
+    QCOMPARE(closedOpacity, 95);
+
+    pin->close();
+    QCoreApplication::processEvents();
+    QTRY_COMPARE(manager.pinCount(), 0);
+
+    PinWindow* restored = manager.restoreLastClosedPin();
+    QVERIFY(restored != nullptr);
+    QCOMPARE(restored->size(), closedSize);
+    QCOMPARE(qRound(restored->windowOpacity() * 100.0), closedOpacity);
+
+    restored->close();
+    QCoreApplication::processEvents();
 }
 
 void CaptureOverlayTests::pinWindowManagerFocusDeactivateClearsActive()

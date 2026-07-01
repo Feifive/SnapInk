@@ -11,7 +11,7 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
-MainWindow::MainWindow(QWidget* parent, bool registerGlobalHotkeys)
+MainWindow::MainWindow(QWidget* parent, const bool registerGlobalHotkeys)
     : QMainWindow(parent)
 {
     setWindowTitle(QStringLiteral("SnapInk"));
@@ -36,7 +36,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
     event->ignore();
 }
 
-void MainWindow::init(bool registerGlobalHotkeys)
+void MainWindow::init(const bool registerGlobalHotkeys)
 {
     m_pinWindowManager  = new PinWindowManager(this);
     m_captureController = new CaptureController(m_pinWindowManager, this, this);
@@ -64,6 +64,9 @@ void MainWindow::init(bool registerGlobalHotkeys)
 
     connect(m_hotkeyController, &HotkeyController::regionCaptureRequested, m_captureController,
             &CaptureController::startRegionCapture);
+
+    connect(m_hotkeyController, &HotkeyController::restorePinRequested, m_pinWindowManager,
+            &PinWindowManager::restoreLastClosedPin);
 
     if (registerGlobalHotkeys)
     {

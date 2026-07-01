@@ -21,6 +21,7 @@ public:
 
 signals:
     void regionCaptureRequested();
+    void restorePinRequested();
     void shortcutRegistrationFailed(const QString& shortcut,
                                     const QString& reason);
 
@@ -31,6 +32,7 @@ private:
 private:
     QWidget* m_dialogParent = nullptr;
     Hotkey* m_regionHotkey = nullptr;
+    Hotkey* m_restorePinHotkey = nullptr;
     bool m_registered = false;
 };
 

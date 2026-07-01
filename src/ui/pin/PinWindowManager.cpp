@@ -28,6 +28,16 @@ PinWindow* PinWindowManager::createPin(const QImage& image,
     return pinWindow;
 }
 
+PinWindow* PinWindowManager::restoreLastClosedPin()
+{
+    if (m_closedPinHistory.isEmpty()) {
+        return nullptr;
+    }
+
+    const PinWindowSnapshot snapshot = m_closedPinHistory.takeLast();
+    return createPinFromSnapshot(snapshot);
+}
+
 int PinWindowManager::pinCount() const
 {
     return m_pinWindows.size();
@@ -133,7 +143,13 @@ void PinWindowManager::onPinFocusDeactivated(PinWindow* pinWindow)
 
 void PinWindowManager::onPinAboutToClose(PinWindow* pinWindow)
 {
-    if (m_closingAllPins || pinWindow == nullptr) {
+    if (pinWindow == nullptr) {
+        return;
+    }
+
+    rememberClosedPin(pinWindow);
+
+    if (m_closingAllPins) {
         return;
     }
 
@@ -191,6 +207,36 @@ void PinWindowManager::registerPin(PinWindow* pinWindow)
             [this, pinWindow]() {
                 removePin(pinWindow);
             });
+}
+
+void PinWindowManager::rememberClosedPin(PinWindow* pinWindow)
+{
+    if (pinWindow == nullptr) {
+        return;
+    }
+
+    m_closedPinHistory.append(pinWindow->snapshot());
+    while (m_closedPinHistory.size() > kMaxClosedPinHistory) {
+        m_closedPinHistory.removeFirst();
+    }
+}
+
+PinWindow* PinWindowManager::createPinFromSnapshot(const PinWindowSnapshot& snapshot)
+{
+    if (snapshot.image.isNull()) {
+        return nullptr;
+    }
+
+    auto* pinWindow = new PinWindow(snapshot.image, snapshot.contentGlobalRect);
+    pinWindow->applySnapshotPresentation(snapshot);
+    registerPin(pinWindow);
+
+    pinWindow->show();
+    pinWindow->raise();
+    activatePin(pinWindow);
+
+    Q_EMIT pinCreated(pinWindow);
+    return pinWindow;
 }
 
 void PinWindowManager::removePin(PinWindow* pinWindow)

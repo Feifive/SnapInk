@@ -12,12 +12,15 @@
 #include <QGraphicsDropShadowEffect>
 #include <QGuiApplication>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QScreen>
 #include <QShowEvent>
+#include <QTimer>
+#include <QWheelEvent>
 #include <QtMath>
 
 // ============================================================================
@@ -115,8 +118,24 @@ namespace
 {
 constexpr int kResizeHitWidth = 8;
 constexpr int kMinimumExtent = 120;
+constexpr int kMinimumInteractiveExtent = 20;
 constexpr qreal kMaximumScreenRatio = 0.9;
 constexpr int kVisibleMargin = 40;
+constexpr int kWheelDeltaPerStep = 120;
+constexpr qreal kNormalWheelScaleIncrement = 0.10;
+constexpr qreal kFineWheelScaleIncrement = 0.01;
+constexpr int kOpacityWheelIncrementPercent = 5;
+constexpr int kMinimumWindowOpacityPercent = 5;
+constexpr int kScaleIndicatorHideDelayMs = 1000;
+
+bool isOpacityWheelModifier(Qt::KeyboardModifiers modifiers)
+{
+#ifdef Q_OS_MACOS
+    return modifiers.testFlag(Qt::ControlModifier);
+#else
+    return modifiers.testFlag(Qt::MetaModifier);
+#endif
+}
 
 QSize deviceIndependentImageSize(const QImage& image)
 {
@@ -132,14 +151,14 @@ QSize deviceIndependentImageSize(const QImage& image)
 QSize constrainPinSize(QSize size, qreal aspectRatio, const QRect& available)
 {
     if (size.isEmpty()) {
-        size = QSize(kMinimumExtent, qRound(kMinimumExtent / aspectRatio));
+        size = QSize(kMinimumInteractiveExtent, qRound(kMinimumInteractiveExtent / aspectRatio));
     }
 
-    int minWidth = kMinimumExtent;
-    int minHeight = qRound(kMinimumExtent / aspectRatio);
+    int minWidth = kMinimumInteractiveExtent;
+    int minHeight = qRound(kMinimumInteractiveExtent / aspectRatio);
     if (aspectRatio < 1.0) {
-        minHeight = kMinimumExtent;
-        minWidth = qRound(kMinimumExtent * aspectRatio);
+        minHeight = kMinimumInteractiveExtent;
+        minWidth = qRound(kMinimumInteractiveExtent * aspectRatio);
     }
 
     if (size.width() < minWidth || size.height() < minHeight) {
@@ -173,6 +192,7 @@ PinWindow::PinWindow(const QImage& image, const QRect& sourceGlobalRect, QWidget
 
     // Calculate content size (actual image display area)
     const QSize imageSize = deviceIndependentImageSize(m_originalImage);
+    m_originalContentSize = imageSize;
     m_aspectRatio = imageSize.height() > 0
         ? qreal(imageSize.width()) / qreal(imageSize.height())
         : 1.0;
@@ -197,6 +217,23 @@ PinWindow::PinWindow(const QImage& image, const QRect& sourceGlobalRect, QWidget
 
     // Initialize with black shadow (inactive state)
     m_contentWidget->updateShadowEffect();
+
+    m_scaleIndicator = new QLabel(this);
+    m_scaleIndicator->setObjectName(QStringLiteral("PinScaleIndicator"));
+    m_scaleIndicator->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    m_scaleIndicator->setAutoFillBackground(false);
+    m_scaleIndicator->setStyleSheet(QStringLiteral(
+        "QLabel#PinScaleIndicator {"
+        "background-color: rgba(55, 55, 55, 220);"
+        "color: white;"
+        "font-weight: 600;"
+        "padding: 3px 3px;"
+        "}"));
+    m_scaleIndicator->hide();
+
+    m_scaleIndicatorHideTimer = new QTimer(this);
+    m_scaleIndicatorHideTimer->setSingleShot(true);
+    connect(m_scaleIndicatorHideTimer, &QTimer::timeout, m_scaleIndicator, &QLabel::hide);
 }
 
 QSize PinWindow::boundedImageSize(const QSize& requested, const QRect& available)
@@ -224,6 +261,34 @@ void PinWindow::setActive(bool active)
 bool PinWindow::isActiveVisual() const
 {
     return m_contentWidget != nullptr && m_contentWidget->isActive();
+}
+
+PinWindowSnapshot PinWindow::snapshot() const
+{
+    PinWindowSnapshot result;
+    result.image = m_originalImage;
+    result.contentSize = currentContentSize();
+    result.contentGlobalRect = QRect(geometry().topLeft() + QPoint(kShadowMargin, kShadowMargin),
+                                     result.contentSize);
+    result.opacityPercent = m_opacityPercent;
+    return result;
+}
+
+void PinWindow::applySnapshotPresentation(const PinWindowSnapshot& snapshot)
+{
+    const QSize contentSize = snapshot.contentSize.isValid()
+        ? snapshot.contentSize
+        : snapshot.contentGlobalRect.size();
+    const QSize windowSize(contentSize.width() + kShadowMargin * 2,
+                           contentSize.height() + kShadowMargin * 2);
+    const QPoint windowTopLeft = snapshot.contentGlobalRect.topLeft()
+                                 - QPoint(kShadowMargin, kShadowMargin);
+    setGeometry(clampedVisibleGeometry(QRect(windowTopLeft, windowSize)));
+
+    m_opacityPercent = qBound(kMinimumWindowOpacityPercent,
+                              snapshot.opacityPercent,
+                              100);
+    setWindowOpacity(qreal(m_opacityPercent) / 100.0);
 }
 
 QRect PinWindow::availableGeometryFor(const QPoint& globalPos) const
@@ -410,6 +475,142 @@ QSize PinWindow::constrainedSize(QSize size, const QRect& available) const
     return constrainPinSize(size, m_aspectRatio, available);
 }
 
+QSize PinWindow::currentContentSize() const
+{
+    return size() - QSize(kShadowMargin * 2, kShadowMargin * 2);
+}
+
+QSize PinWindow::constrainedWheelSize(QSize size, const QRect& available) const
+{
+    if (size.isEmpty()) {
+        return QSize(kMinimumInteractiveExtent, qRound(kMinimumInteractiveExtent / m_aspectRatio));
+    }
+
+    int minWidth = kMinimumInteractiveExtent;
+    int minHeight = qRound(kMinimumInteractiveExtent / m_aspectRatio);
+    if (m_aspectRatio < 1.0) {
+        minHeight = kMinimumInteractiveExtent;
+        minWidth = qRound(kMinimumInteractiveExtent * m_aspectRatio);
+    }
+
+    if (size.width() < minWidth || size.height() < minHeight) {
+        size = QSize(minWidth, minHeight);
+    }
+
+    const QSize maxSize(qMax(1, qFloor(available.width() * kMaximumScreenRatio)),
+                        qMax(1, qFloor(available.height() * kMaximumScreenRatio)));
+    if (size.width() > maxSize.width() || size.height() > maxSize.height()) {
+        size.scale(maxSize, Qt::KeepAspectRatio);
+    }
+    return size.expandedTo(QSize(1, 1));
+}
+
+void PinWindow::scaleByWheelEvent(QWheelEvent* event)
+{
+    if (event == nullptr) {
+        return;
+    }
+
+    const int deltaY = !event->angleDelta().isNull()
+        ? event->angleDelta().y()
+        : event->pixelDelta().y();
+    if (deltaY == 0) {
+        return;
+    }
+
+    const qreal step = event->modifiers().testFlag(Qt::AltModifier)
+        ? kFineWheelScaleIncrement
+        : kNormalWheelScaleIncrement;
+    const qreal wheelSteps = event->angleDelta().isNull()
+        ? 1.0
+        : qMax(1.0, qAbs(qreal(deltaY)) / qreal(kWheelDeltaPerStep));
+    const qreal scaleDelta = step * wheelSteps * (deltaY > 0 ? 1.0 : -1.0);
+
+    const qreal currentScale = m_originalContentSize.isEmpty()
+        ? 1.0
+        : qreal(currentContentSize().width()) / qreal(m_originalContentSize.width());
+    const qreal targetScale = currentScale + scaleDelta;
+    QSize targetContentSize(qRound(m_originalContentSize.width() * targetScale),
+                            qRound(m_originalContentSize.height() * targetScale));
+    targetContentSize = constrainedWheelSize(targetContentSize, availableGeometryFor(geometry().center()));
+
+    const QSize targetWindowSize(targetContentSize.width() + kShadowMargin * 2,
+                                 targetContentSize.height() + kShadowMargin * 2);
+    QRect targetGeometry(QPoint(0, 0), targetWindowSize);
+    targetGeometry.moveCenter(geometry().center());
+    setGeometry(clampedVisibleGeometry(targetGeometry));
+
+    showScaleIndicator();
+}
+
+void PinWindow::adjustOpacityByWheelEvent(QWheelEvent* event)
+{
+    if (event == nullptr) {
+        return;
+    }
+
+    const int deltaY = !event->angleDelta().isNull()
+        ? event->angleDelta().y()
+        : event->pixelDelta().y();
+    if (deltaY == 0) {
+        return;
+    }
+
+    const int opacityDelta = deltaY > 0 ? kOpacityWheelIncrementPercent : -kOpacityWheelIncrementPercent;
+    m_opacityPercent = qBound(kMinimumWindowOpacityPercent,
+                              m_opacityPercent + opacityDelta,
+                              100);
+    setWindowOpacity(qreal(m_opacityPercent) / 100.0);
+    showOpacityIndicator();
+}
+
+int PinWindow::currentScalePercent() const
+{
+    if (m_originalContentSize.isEmpty()) {
+        return 100;
+    }
+
+    return qRound((qreal(currentContentSize().width()) / qreal(m_originalContentSize.width())) * 100.0);
+}
+
+int PinWindow::currentOpacityPercent() const
+{
+    return m_opacityPercent;
+}
+
+void PinWindow::showIndicatorText(const QString& text)
+{
+    if (m_scaleIndicator == nullptr || m_scaleIndicatorHideTimer == nullptr) {
+        return;
+    }
+
+    m_scaleIndicator->setText(text);
+    updateScaleIndicatorGeometry();
+    m_scaleIndicator->show();
+    m_scaleIndicator->raise();
+    m_scaleIndicatorHideTimer->start(kScaleIndicatorHideDelayMs);
+}
+
+void PinWindow::showScaleIndicator()
+{
+    showIndicatorText(QStringLiteral("缩放：%1%").arg(currentScalePercent()));
+}
+
+void PinWindow::showOpacityIndicator()
+{
+    showIndicatorText(QStringLiteral("不透明度：%1%").arg(currentOpacityPercent()));
+}
+
+void PinWindow::updateScaleIndicatorGeometry()
+{
+    if (m_scaleIndicator == nullptr) {
+        return;
+    }
+
+    m_scaleIndicator->adjustSize();
+    m_scaleIndicator->move(kShadowMargin, kShadowMargin);
+}
+
 void PinWindow::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event)
@@ -439,6 +640,7 @@ void PinWindow::resizeEvent(QResizeEvent* event)
         m_contentWidget->setGeometry(kShadowMargin, kShadowMargin,
                                       contentSize.width(), contentSize.height());
     }
+    updateScaleIndicatorGeometry();
 }
 
 void PinWindow::enterEvent(QEnterEvent* event)
@@ -523,6 +725,16 @@ void PinWindow::mouseReleaseEvent(QMouseEvent* event)
     }
 
     QWidget::mouseReleaseEvent(event);
+}
+
+void PinWindow::wheelEvent(QWheelEvent* event)
+{
+    if (isOpacityWheelModifier(event->modifiers())) {
+        adjustOpacityByWheelEvent(event);
+    } else {
+        scaleByWheelEvent(event);
+    }
+    event->accept();
 }
 
 void PinWindow::keyPressEvent(QKeyEvent* event)

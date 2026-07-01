@@ -15,9 +15,13 @@ inline QKeySequence regionCapture() { return QKeySequence(QStringLiteral("Ctrl+1
 /// Overlay-local hotkey: pin the current selection.
 inline QKeySequence pinCapture() { return QKeySequence(QStringLiteral("Ctrl+2")); }
 
+/// Global hotkey: restore the most recently closed pin window.
+inline QKeySequence restorePin() { return QKeySequence(QStringLiteral("Ctrl+3")); }
+
 /// Human-readable label for a given hotkey (used in UI hints / error messages).
 inline QString regionCaptureLabel() { return regionCapture().toString(QKeySequence::NativeText); }
 inline QString pinCaptureLabel()    { return pinCapture().toString(QKeySequence::NativeText); }
+inline QString restorePinLabel()    { return restorePin().toString(QKeySequence::NativeText); }
 
 } // namespace HotkeyConfig
 

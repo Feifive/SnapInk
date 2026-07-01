@@ -6,6 +6,18 @@
 #include <QRect>
 #include <QWidget>
 
+class QLabel;
+class QTimer;
+class QWheelEvent;
+
+struct PinWindowSnapshot
+{
+    QImage image;
+    QRect contentGlobalRect;
+    QSize contentSize;
+    int opacityPercent = 100;
+};
+
 /// Internal content widget that renders the pinned image with rounded corners and border.
 /// This widget is transparent to mouse events so PinWindow handles all interactions.
 class PinContentWidget : public QWidget
@@ -45,6 +57,9 @@ public:
     /// Returns the visual active state of the content widget (for testing).
     [[nodiscard]] bool isActiveVisual() const;
 
+    [[nodiscard]] PinWindowSnapshot snapshot() const;
+    void applySnapshotPresentation(const PinWindowSnapshot& snapshot);
+
 signals:
     void focusActivated(PinWindow* pinWindow);
     void focusDeactivated(PinWindow* pinWindow);
@@ -61,6 +76,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
@@ -94,9 +110,20 @@ private:
     void resizeByMouseMove(const QPoint& globalPos);
     QRect aspectResizeGeometry(const QPoint& globalPos) const;
     QSize constrainedSize(QSize size, const QRect& available) const;
+    QSize currentContentSize() const;
+    QSize constrainedWheelSize(QSize size, const QRect& available) const;
+    void scaleByWheelEvent(QWheelEvent* event);
+    void adjustOpacityByWheelEvent(QWheelEvent* event);
+    void showIndicatorText(const QString& text);
+    void showScaleIndicator();
+    void showOpacityIndicator();
+    void updateScaleIndicatorGeometry();
+    int currentScalePercent() const;
+    int currentOpacityPercent() const;
 
     QImage m_originalImage;
     QPixmap m_displayPixmap;
+    QSize m_originalContentSize;
     QPoint m_pressGlobalPos;
     QPoint m_initialWindowTopLeft;
     QRect m_initialGeometry;
@@ -107,9 +134,12 @@ private:
     bool m_hovered = false;
     bool m_closing = false;
     bool m_nativeOverlayConfigured = false;
+    int m_opacityPercent = 100;
 
     // Content widget for rendering the image with shadow effect
     PinContentWidget* m_contentWidget = nullptr;
+    QLabel* m_scaleIndicator = nullptr;
+    QTimer* m_scaleIndicatorHideTimer = nullptr;
     static constexpr int kShadowMargin = 18;
 };
 

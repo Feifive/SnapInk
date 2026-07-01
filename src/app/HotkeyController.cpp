@@ -27,11 +27,17 @@ void HotkeyController::registerShortcuts()
 
     const QKeySequence regionShortcut = HotkeyConfig::regionCapture();
     m_regionHotkey = new Hotkey(regionShortcut, false, this);
+    const QKeySequence restorePinShortcut = HotkeyConfig::restorePin();
+    m_restorePinHotkey = new Hotkey(restorePinShortcut, false, this);
 
     connect(m_regionHotkey,
             &Hotkey::activated,
             this,
             &HotkeyController::regionCaptureRequested);
+    connect(m_restorePinHotkey,
+            &Hotkey::activated,
+            this,
+            &HotkeyController::restorePinRequested);
 
     connect(m_regionHotkey,
             &Hotkey::registrationFailed,
@@ -41,8 +47,17 @@ void HotkeyController::registerShortcuts()
                     regionShortcut.toString(QKeySequence::NativeText),
                     reason);
             });
+    connect(m_restorePinHotkey,
+            &Hotkey::registrationFailed,
+            this,
+            [this, restorePinShortcut](const QString& reason) {
+                handleRegistrationFailure(
+                    restorePinShortcut.toString(QKeySequence::NativeText),
+                    reason);
+            });
 
     m_regionHotkey->registerShortcut();
+    m_restorePinHotkey->registerShortcut();
     m_registered = true;
 }
 
@@ -52,6 +67,11 @@ void HotkeyController::unregisterShortcuts()
         m_regionHotkey->unregisterShortcut();
         delete m_regionHotkey;
         m_regionHotkey = nullptr;
+    }
+    if (m_restorePinHotkey != nullptr) {
+        m_restorePinHotkey->unregisterShortcut();
+        delete m_restorePinHotkey;
+        m_restorePinHotkey = nullptr;
     }
     m_registered = false;
 }
