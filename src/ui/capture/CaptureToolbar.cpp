@@ -7,6 +7,7 @@
 CaptureToolbar::CaptureToolbar(QWidget* parent)
     : QWidget(parent)
 {
+    setObjectName(QStringLiteral("CaptureToolbar"));
     setAttribute(Qt::WA_StyledBackground, true);
     setAutoFillBackground(true);
     setStyleSheet(QStringLiteral(

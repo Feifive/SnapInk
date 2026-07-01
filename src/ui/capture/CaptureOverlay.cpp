@@ -43,6 +43,7 @@ public:
         : QWidget(overlay)
         , m_overlay(overlay)
     {
+        setObjectName(QStringLiteral("SelectionChromeLayer"));
         setAttribute(Qt::WA_TransparentForMouseEvents, true);
         setAttribute(Qt::WA_TranslucentBackground, true);
         setAutoFillBackground(false);
@@ -79,7 +80,7 @@ CaptureOverlay::CaptureOverlay(CaptureResult captureResult,
     setAttribute(Qt::WA_DeleteOnClose, true);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
-    setCursor(Qt::ArrowCursor);
+    setCursor(Qt::CrossCursor);
     setGeometry(m_virtualGeometry);
 
     setupAnnotationView();
@@ -121,34 +122,16 @@ CaptureState CaptureOverlay::state() const
 
 void CaptureOverlay::enterEditing(const QRect& imageRect)
 {
-    if (m_captureResult.screens().isEmpty()) {
+    const QRect boundedSelection = normalizeSelectionForEditing(imageRect);
+    if (boundedSelection.isEmpty()) {
         return;
     }
 
-    CaptureSelectionModel candidate(m_selectionModel.bounds());
-    candidate.setSelectionRect(imageRect);
-    const QRect bounded = candidate.selectionRect();
-    if (bounded.isEmpty()) {
+    if (!prepareEditingSession(boundedSelection)) {
         return;
     }
 
-    m_annotationController.clearInteractionState();
-    m_selectionModel.setSelectionRect(bounded);
-    m_state = CaptureState::Editing;
-
-    prepareAnnotationScene();
-    syncAnnotationViewGeometry();
-
-    setCurrentTool(CaptureTool::Select);
-    setCursor(Qt::ArrowCursor);
-    m_annotationController.view()->show();
-    m_annotationController.view()->raise();
-    m_selectionChromeLayer->setGeometry(rect());
-    m_selectionChromeLayer->show();
-    m_selectionChromeLayer->raise();
-    m_toolbar->show();
-    updateToolbarGeometry();
-    update();
+    transitionToEditing();
 }
 
 void CaptureOverlay::addAnnotationItem(QGraphicsItem* item)
@@ -183,10 +166,17 @@ void CaptureOverlay::redo()
 
 QImage CaptureOverlay::renderResultImage()
 {
+    return buildResultImageForAction();
+}
+
+QImage CaptureOverlay::buildResultImageForAction()
+{
     const QRect selection = m_selectionModel.selectionRect();
     if (m_state != CaptureState::Editing || selection.isEmpty()) {
         return {};
     }
+
+    m_annotationController.commitActiveTextEditing();
 
     QImage result = m_imageComposer.createTransparentCanvas(selection);
     if (result.isNull()) {
@@ -529,6 +519,17 @@ void CaptureOverlay::expandSelectionToPoint(const QPoint& imagePoint)
     applySelectionModelChange(oldRect);
 }
 
+QRect CaptureOverlay::normalizeSelectionForEditing(const QRect& imageRect) const
+{
+    if (m_captureResult.screens().isEmpty()) {
+        return {};
+    }
+
+    CaptureSelectionModel candidate(m_selectionModel.bounds());
+    candidate.setSelectionRect(imageRect);
+    return candidate.selectionRect();
+}
+
 CaptureInputController::Callbacks CaptureOverlay::makeInputCallbacks()
 {
     CaptureInputController::Callbacks callbacks;
@@ -607,13 +608,28 @@ void CaptureOverlay::setupAnnotationView()
     annotationView->hide();
 }
 
+bool CaptureOverlay::prepareEditingSession(const QRect& selection)
+{
+    if (selection.isEmpty()) {
+        return false;
+    }
+
+    m_selectionModel.setSelectionRect(selection);
+    if (m_selectionModel.selectionRect().isEmpty()) {
+        return false;
+    }
+
+    m_annotationController.clearInteractionState();
+    prepareAnnotationScene();
+    setCurrentTool(CaptureTool::Select);
+    return true;
+}
+
 void CaptureOverlay::prepareAnnotationScene()
 {
     m_annotationController.clearAll();
     m_annotationController.setSceneRect(selectionSceneRect());
-    const QPixmap selectionPixmap =
-        QPixmap::fromImage(m_imageComposer.composeSelectionImage(m_selectionModel.selectionRect()));
-    m_annotationController.setBackgroundPixmap(selectionPixmap);
+    updateSelectionBackground();
 }
 
 void CaptureOverlay::syncAnnotationViewGeometry()
@@ -634,16 +650,6 @@ void CaptureOverlay::syncAnnotationViewGeometry()
             m_selectionChromeLayer->raise();
         }
     }
-}
-
-void CaptureOverlay::clearAnnotationsAndHistory()
-{
-    m_annotationController.clearAll();
-    m_annotationController.view()->hide();
-    if (m_selectionChromeLayer != nullptr) {
-        m_selectionChromeLayer->hide();
-    }
-    syncUndoRedoAvailability();
 }
 
 void CaptureOverlay::syncUndoRedoAvailability()
@@ -849,66 +855,178 @@ void CaptureOverlay::setCurrentTool(CaptureTool tool)
     setCursor(tool == CaptureTool::Select ? Qt::ArrowCursor : Qt::CrossCursor);
 }
 
-void CaptureOverlay::copyAndClose()
+void CaptureOverlay::copyResultImage(const QImage& image)
 {
-    const QImage result = renderResultImage();
-    if (!result.isNull()) {
-        ClipboardService::copyImage(result);
+    ClipboardService::copyImage(image);
+}
+
+QString CaptureOverlay::requestSavePath()
+{
+    return QFileDialog::getSaveFileName(this,
+                                        QStringLiteral("Save Screenshot"),
+                                        defaultSavePath(),
+                                        QStringLiteral("PNG Images (*.png)"));
+}
+
+bool CaptureOverlay::saveResultImage(const QImage& image, const QString& fileName)
+{
+    return image.save(fileName, "PNG");
+}
+
+void CaptureOverlay::showSaveFailedMessage()
+{
+    QMessageBox::critical(this,
+                          QStringLiteral("Save Failed"),
+                          QStringLiteral("Could not save the PNG file."));
+}
+
+void CaptureOverlay::showPinFailedMessage()
+{
+    QMessageBox::critical(this,
+                          QStringLiteral("Pin Failed"),
+                          QStringLiteral("Could not create a pin from the current selection."));
+}
+
+void CaptureOverlay::resetEditingUi()
+{
+    if (QGraphicsView* annotationView = m_annotationController.view()) {
+        annotationView->hide();
     }
+    if (m_selectionChromeLayer != nullptr) {
+        m_selectionChromeLayer->hide();
+    }
+    if (m_toolbar != nullptr) {
+        m_toolbar->hide();
+    }
+}
+
+void CaptureOverlay::resetEditingSession()
+{
+    m_annotationController.clearInteractionState();
+    m_annotationController.clearAll();
+    syncUndoRedoAvailability();
+}
+
+void CaptureOverlay::transitionToSelecting()
+{
+    m_state = CaptureState::Selecting;
+    finishSelectionInteraction();
+    m_selectionModel.clear();
+
+    resetEditingSession();
+    resetEditingUi();
+
+    setCursor(Qt::CrossCursor);
+    update();
+}
+
+void CaptureOverlay::transitionToEditing()
+{
+    m_state = CaptureState::Editing;
+
+    QGraphicsView* annotationView = m_annotationController.view();
+    if (annotationView != nullptr) {
+        annotationView->show();
+        annotationView->raise();
+    }
+
+    if (m_selectionChromeLayer != nullptr) {
+        m_selectionChromeLayer->setGeometry(rect());
+        m_selectionChromeLayer->show();
+        m_selectionChromeLayer->raise();
+    }
+
+    if (m_toolbar != nullptr) {
+        m_toolbar->show();
+    }
+
+    syncAnnotationViewGeometry();
+    updateToolbarGeometry();
+
+    setCursor(Qt::ArrowCursor);
+    update();
+}
+
+void CaptureOverlay::transitionToFinished()
+{
+    if (m_state == CaptureState::Finished || m_state == CaptureState::Canceled) {
+        return;
+    }
+
+    m_annotationController.commitActiveTextEditing();
+    finishSelectionInteraction();
 
     m_state = CaptureState::Finished;
     close();
+}
+
+void CaptureOverlay::transitionToCanceled()
+{
+    if (m_state == CaptureState::Finished) {
+        return;
+    }
+
+    if (m_state != CaptureState::Canceled) {
+        m_annotationController.cancelActiveTextEditing();
+        m_annotationController.clearInteractionState();
+        finishSelectionInteraction();
+        m_state = CaptureState::Canceled;
+    }
+
+    if (!m_canceledSignalEmitted) {
+        m_canceledSignalEmitted = true;
+        Q_EMIT canceled();
+    }
+
+    close();
+}
+
+void CaptureOverlay::copyAndClose()
+{
+    const QImage result = buildResultImageForAction();
+    if (result.isNull()) {
+        return;
+    }
+
+    copyResultImage(result);
+    transitionToFinished();
 }
 
 void CaptureOverlay::saveAndClose()
 {
-    const QImage result = renderResultImage();
+    const QImage result = buildResultImageForAction();
     if (result.isNull()) {
         return;
     }
 
-    const QString fileName = QFileDialog::getSaveFileName(this,
-                                                          QStringLiteral("Save Screenshot"),
-                                                          defaultSavePath(),
-                                                          QStringLiteral("PNG Images (*.png)"));
+    const QString fileName = requestSavePath();
     if (fileName.isEmpty()) {
         return;
     }
 
-    if (!result.save(fileName, "PNG")) {
-        QMessageBox::critical(this,
-                              QStringLiteral("Save Failed"),
-                              QStringLiteral("Could not save the PNG file."));
+    if (!saveResultImage(result, fileName)) {
+        showSaveFailedMessage();
         return;
     }
 
-    m_state = CaptureState::Finished;
-    close();
+    transitionToFinished();
 }
 
 void CaptureOverlay::cancelAndClose()
 {
-    m_state = CaptureState::Canceled;
-    Q_EMIT canceled();
-    close();
+    transitionToCanceled();
 }
 
 void CaptureOverlay::reselect()
 {
-    clearAnnotationsAndHistory();
-    m_state = CaptureState::Selecting;
-    m_selectionModel.clear();
-    m_toolbar->hide();
-    update();
+    transitionToSelecting();
 }
 
 void CaptureOverlay::pinAndClose()
 {
-    const QImage result = renderResultImage();
+    const QImage result = buildResultImageForAction();
     if (result.isNull()) {
-        QMessageBox::critical(this,
-                              QStringLiteral("Pin Failed"),
-                              QStringLiteral("Could not create a pin from the current selection."));
+        showPinFailedMessage();
         return;
     }
 
@@ -917,6 +1035,5 @@ void CaptureOverlay::pinAndClose()
 
     Q_EMIT pinRequested(result, selectionGlobal);
 
-    m_state = CaptureState::Finished;
-    close();
+    transitionToFinished();
 }

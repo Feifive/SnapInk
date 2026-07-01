@@ -11,6 +11,7 @@
 #include <QCursor>
 #include <QImage>
 #include <QRect>
+#include <QString>
 #include <QWidget>
 
 class CaptureToolbar;
@@ -57,6 +58,13 @@ signals:
     void pinRequested(const QImage& image, const QRect& sourceGlobalRect);
 
 protected:
+    virtual QImage buildResultImageForAction();
+    virtual void copyResultImage(const QImage& image);
+    virtual QString requestSavePath();
+    virtual bool saveResultImage(const QImage& image, const QString& fileName);
+    virtual void showSaveFailedMessage();
+    virtual void showPinFailedMessage();
+
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
@@ -98,13 +106,14 @@ private:
     void updateToolbarPosition();
     void shiftAllAnnotations(qreal dx, qreal dy);
     void expandSelectionToPoint(const QPoint& imagePoint);
+    QRect normalizeSelectionForEditing(const QRect& imageRect) const;
 
     // ----- annotation drawing -------------------------------------------------
     CaptureInputController::Callbacks makeInputCallbacks();
     void setupAnnotationView();
+    bool prepareEditingSession(const QRect& selection);
     void prepareAnnotationScene();
     void syncAnnotationViewGeometry();
-    void clearAnnotationsAndHistory();
     void syncUndoRedoAvailability();
 
     // ----- painting -----------------------------------------------------------
@@ -124,6 +133,12 @@ private:
     void cancelAndClose();
     void reselect();
     void pinAndClose();
+    void transitionToSelecting();
+    void transitionToEditing();
+    void transitionToFinished();
+    void transitionToCanceled();
+    void resetEditingUi();
+    void resetEditingSession();
 
     // ----- data members -------------------------------------------------------
     CaptureResult m_captureResult;
@@ -135,6 +150,7 @@ private:
     CaptureState m_state = CaptureState::Selecting;
     CaptureToolbar* m_toolbar = nullptr;
     QWidget* m_selectionChromeLayer = nullptr;
+    bool m_canceledSignalEmitted = false;
 };
 
 #endif // CAPTUREOVERLAY_H

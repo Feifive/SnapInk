@@ -14,21 +14,22 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    MainWindow(QWidget *parent = nullptr, bool registerGlobalHotkeys = true);
-    ~MainWindow();
+    explicit MainWindow(QWidget* parent = nullptr, bool registerGlobalHotkeys = true);
+    ~MainWindow() override;
 
 protected:
     void closeEvent(QCloseEvent* event) override;
 
 private:
+    void init(bool registerGlobalHotkeys);
     void setupCentralWidget();
     void showMainWindow();
     void quitApplication();
 
-    TrayController* m_trayController = nullptr;
+    TrayController* m_trayController       = nullptr;
     CaptureController* m_captureController = nullptr;
-    HotkeyController* m_hotkeyController = nullptr;
-    PinWindowManager* m_pinWindowManager = nullptr;
-    bool m_isQuitting = false;
+    HotkeyController* m_hotkeyController   = nullptr;
+    PinWindowManager* m_pinWindowManager   = nullptr;
+    bool m_isQuitting                      = false;
 };
 #endif // MAINWINDOW_H
