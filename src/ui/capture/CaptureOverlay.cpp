@@ -66,6 +66,7 @@ private:
 
 CaptureOverlay::CaptureOverlay(CaptureResult captureResult,
                                const QRect& virtualGeometry,
+                               CaptureOverlayMode mode,
                                QWidget* parent)
     : QWidget(parent)
     , m_captureResult(std::move(captureResult))
@@ -73,6 +74,7 @@ CaptureOverlay::CaptureOverlay(CaptureResult captureResult,
     , m_selectionModel(QRect(QPoint(0, 0), virtualGeometry.size()))
     , m_imageComposer(m_captureResult, m_virtualGeometry)
     , m_inputController(m_annotationController, m_selectionModel, makeInputCallbacks())
+    , m_mode(mode)
     , m_toolbar(new CaptureToolbar(this))
     , m_selectionChromeLayer(new SelectionChromeLayer(this))
 {
@@ -132,6 +134,52 @@ void CaptureOverlay::enterEditing(const QRect& imageRect)
     }
 
     transitionToEditing();
+}
+
+void CaptureOverlay::beginExternalSelection(const QPoint& imagePos)
+{
+    if (m_state != CaptureState::Selecting || terminalActionHasStarted()) {
+        return;
+    }
+
+    m_selectionModel.beginSelection(widgetToImagePos(imagePos));
+    resetEditingUi();
+    update();
+}
+
+void CaptureOverlay::updateExternalSelection(const QPoint& imagePos)
+{
+    if (m_state != CaptureState::Selecting || !m_selectionModel.hasSelection()
+        || terminalActionHasStarted()) {
+        return;
+    }
+
+    m_selectionModel.updateSelection(widgetToImagePos(imagePos));
+    update();
+}
+
+void CaptureOverlay::finishExternalSelectionAndPin(const QPoint& imagePos)
+{
+    if (m_state != CaptureState::Selecting || !m_selectionModel.hasSelection()
+        || terminalActionHasStarted()) {
+        return;
+    }
+
+    m_selectionModel.updateSelection(widgetToImagePos(imagePos));
+    if (!m_selectionModel.commitSelection()) {
+        cancelAndClose();
+        return;
+    }
+
+    enterEditing(m_selectionModel.selectionRect());
+    pinAndClose();
+}
+
+void CaptureOverlay::cancelExternalSelection()
+{
+    if (m_state == CaptureState::Selecting) {
+        cancelAndClose();
+    }
 }
 
 void CaptureOverlay::addAnnotationItem(QGraphicsItem* item)
@@ -204,7 +252,9 @@ void CaptureOverlay::paintEvent(QPaintEvent* event)
     painter.setRenderHint(QPainter::Antialiasing, true);
 
     paintBackground(painter);
-    painter.fillRect(rect(), QColor(0, 0, 0, kDimAlpha));
+    if (m_mode == CaptureOverlayMode::InteractiveEdit) {
+        painter.fillRect(rect(), QColor(0, 0, 0, kDimAlpha));
+    }
 
     const QRect selection = normalizedImageSelection();
     if (selection.isEmpty()) {
@@ -212,10 +262,12 @@ void CaptureOverlay::paintEvent(QPaintEvent* event)
     }
 
     const QRect widgetSelection = imageToWidgetRect(selection);
-    painter.save();
-    painter.setClipRect(widgetSelection);
-    paintBackground(painter);
-    painter.restore();
+    if (m_mode == CaptureOverlayMode::InteractiveEdit) {
+        painter.save();
+        painter.setClipRect(widgetSelection);
+        paintBackground(painter);
+        painter.restore();
+    }
 
     if (m_annotationController.view() == nullptr || !m_annotationController.view()->isVisible()) {
         paintSelectionChrome(painter, widgetSelection, selection);
@@ -802,6 +854,11 @@ void CaptureOverlay::updateToolbarGeometry()
         if (m_toolbar != nullptr) {
             m_toolbar->hide();
         }
+        return;
+    }
+
+    if (m_mode == CaptureOverlayMode::GlobalDragPin) {
+        m_toolbar->hide();
         return;
     }
 

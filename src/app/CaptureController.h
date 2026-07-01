@@ -6,6 +6,7 @@
 
 class CaptureOverlay;
 class PinWindowManager;
+class QPoint;
 class QWidget;
 
 class CaptureController final : public QObject
@@ -21,6 +22,10 @@ public:
 
 public slots:
     void startRegionCapture();
+    void beginGlobalDragPinCapture(const QPoint& globalPos);
+    void updateGlobalDragPinCapture(const QPoint& globalPos);
+    void finishGlobalDragPinCapture(const QPoint& globalPos);
+    void cancelGlobalDragPinCapture();
 
 signals:
     void captureStarted();
@@ -28,7 +33,8 @@ signals:
     void captureUnavailable();
 
 private:
-    void showOverlay(CaptureOverlay* overlay);
+    void showOverlay(CaptureOverlay* overlay, bool activate = true);
+    QPoint overlayLocalPointForGlobal(const QPoint& globalPos) const;
     void showCaptureUnavailable();
 
 private:

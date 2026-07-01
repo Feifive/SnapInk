@@ -28,6 +28,12 @@ enum class CaptureState
     Canceled
 };
 
+enum class CaptureOverlayMode
+{
+    InteractiveEdit,
+    GlobalDragPin
+};
+
 class CaptureOverlay : public QWidget
 {
     Q_OBJECT
@@ -40,11 +46,16 @@ public:
     /// @param parent          Optional parent widget.
     CaptureOverlay(CaptureResult captureResult,
                    const QRect& virtualGeometry,
+                   CaptureOverlayMode mode = CaptureOverlayMode::InteractiveEdit,
                    QWidget* parent = nullptr);
     ~CaptureOverlay() override;
 
     CaptureState state() const;
     void enterEditing(const QRect& imageRect);
+    void beginExternalSelection(const QPoint& imagePos);
+    void updateExternalSelection(const QPoint& imagePos);
+    void finishExternalSelectionAndPin(const QPoint& imagePos);
+    void cancelExternalSelection();
     void addAnnotationItem(QGraphicsItem* item);
     bool canUndo() const;
     bool canRedo() const;
@@ -144,6 +155,7 @@ private:
     AnnotationSceneController m_annotationController;
     CaptureInputController m_inputController;
     CaptureState m_state = CaptureState::Selecting;
+    CaptureOverlayMode m_mode = CaptureOverlayMode::InteractiveEdit;
     CaptureToolbar* m_toolbar = nullptr;
     QWidget* m_selectionChromeLayer = nullptr;
     bool m_canceledSignalEmitted = false;

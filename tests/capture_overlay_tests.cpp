@@ -1,6 +1,7 @@
 #include "../src/core/capture/CapturedScreen.h"
 #include "../src/app/mainwindow.h"
 #include "../src/app/CaptureController.h"
+#include "../src/app/GlobalMouseController.h"
 #include "../src/app/HotkeyController.h"
 #include "../src/ui/capture/CaptureAnnotation.h"
 #include "../src/ui/capture/CaptureOverlay.h"
@@ -249,6 +250,9 @@ private slots:
     void saveActionCancelKeepsEditingSession();
     void saveActionFailureKeepsEditingSession();
     void pinActionEmitsImageSourceRectAndTransitionsToFinished();
+    void globalDragPinModeDoesNotDimBackgroundOrShowToolbar();
+    void globalDragPinModeFinishesByEmittingPinRequest();
+    void globalDragPinModeInvalidSelectionCancelsWithoutPin();
     void pinActionIgnoresSynchronousReentry();
     void pinActionFailureKeepsEditingSession();
     void reselectClearsEditingSessionAndUi();
@@ -317,6 +321,7 @@ private slots:
 
     // App shell / tray tests
     void mainWindowCreatesTrayMenuWithoutRegisteringHotkeysInTests();
+    void mainWindowCreatesGlobalMouseController();
     void mainWindowTrayIconUsesPlatformIcon();
     void trayActivationDoesNotManuallyPopupDuplicateMenu();
     void mainWindowCloseHidesInsteadOfDestroying();
@@ -333,6 +338,7 @@ private slots:
     void captureControllerOverlayLifecycleEmitsSignals();
     void captureControllerPinRequestedForwardsToPinWindowManager();
     void captureControllerOverlayDestroyedResetsCapturingState();
+    void captureControllerGlobalDragPinCaptureUsesPublicLifecycle();
 
     // HotkeyController tests
     void hotkeyControllerRegisterShortcutsIsIdempotent();
@@ -667,6 +673,72 @@ void CaptureOverlayTests::pinActionEmitsImageSourceRectAndTransitionsToFinished(
     QCOMPARE(sourceRect, QRect(-30, -10, 40, 30));
     QCOMPARE(pinnedImage.pixelColor(2, 2), QColor(Qt::red));
     QCOMPARE(overlay.state(), CaptureState::Finished);
+    QVERIFY(!overlay.isVisible());
+}
+
+void CaptureOverlayTests::globalDragPinModeDoesNotDimBackgroundOrShowToolbar()
+{
+    TestableCaptureOverlay overlay(makeSingleScreenResult(100, 80),
+                                   QRect(0, 0, 100, 80),
+                                   CaptureOverlayMode::GlobalDragPin);
+    overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+    overlay.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&overlay));
+
+    overlay.beginExternalSelection(QPoint(10, 10));
+    overlay.updateExternalSelection(QPoint(40, 30));
+    QCoreApplication::processEvents();
+
+    const QImage grabbed = overlay.grab().toImage();
+    QVERIFY(!grabbed.isNull());
+    QCOMPARE(grabbed.pixelColor(2, 2), QColor(Qt::white));
+    QVERIFY(toolbarFor(overlay)->isHidden());
+    QVERIFY(annotationViewFor(overlay)->isHidden());
+    QVERIFY(selectionChromeFor(overlay)->isHidden());
+}
+
+void CaptureOverlayTests::globalDragPinModeFinishesByEmittingPinRequest()
+{
+    TestableCaptureOverlay overlay(makeSingleScreenResult(100, 80),
+                                   QRect(0, 0, 100, 80),
+                                   CaptureOverlayMode::GlobalDragPin);
+    overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+    overlay.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&overlay));
+    QSignalSpy pinSpy(&overlay, &CaptureOverlay::pinRequested);
+
+    overlay.beginExternalSelection(QPoint(10, 10));
+    overlay.updateExternalSelection(QPoint(40, 30));
+    overlay.finishExternalSelectionAndPin(QPoint(40, 30));
+
+    QCOMPARE(pinSpy.count(), 1);
+    const QList<QVariant> args = pinSpy.takeFirst();
+    const QImage pinnedImage = qvariant_cast<QImage>(args.at(0));
+    const QRect sourceRect = qvariant_cast<QRect>(args.at(1));
+    QVERIFY(!pinnedImage.isNull());
+    QCOMPARE(pinnedImage.size(), QSize(30, 20));
+    QCOMPARE(sourceRect, QRect(10, 10, 30, 20));
+    QCOMPARE(overlay.state(), CaptureState::Finished);
+    QVERIFY(!overlay.isVisible());
+}
+
+void CaptureOverlayTests::globalDragPinModeInvalidSelectionCancelsWithoutPin()
+{
+    TestableCaptureOverlay overlay(makeSingleScreenResult(100, 80),
+                                   QRect(0, 0, 100, 80),
+                                   CaptureOverlayMode::GlobalDragPin);
+    overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+    overlay.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&overlay));
+    QSignalSpy pinSpy(&overlay, &CaptureOverlay::pinRequested);
+    QSignalSpy canceledSpy(&overlay, &CaptureOverlay::canceled);
+
+    overlay.beginExternalSelection(QPoint(10, 10));
+    overlay.finishExternalSelectionAndPin(QPoint(10, 10));
+
+    QCOMPARE(pinSpy.count(), 0);
+    QCOMPARE(canceledSpy.count(), 1);
+    QCOMPARE(overlay.state(), CaptureState::Canceled);
     QVERIFY(!overlay.isVisible());
 }
 
@@ -2190,6 +2262,14 @@ void CaptureOverlayTests::mainWindowTrayIconUsesPlatformIcon()
 #endif
 }
 
+void CaptureOverlayTests::mainWindowCreatesGlobalMouseController()
+{
+    MainWindow window(nullptr, false);
+
+    auto* controller = window.findChild<GlobalMouseController*>();
+    QVERIFY(controller != nullptr);
+}
+
 void CaptureOverlayTests::trayActivationDoesNotManuallyPopupDuplicateMenu()
 {
     MainWindow window(nullptr, false);
@@ -2454,6 +2534,35 @@ void CaptureOverlayTests::captureControllerOverlayDestroyedResetsCapturingState(
         QCOMPARE(finishSpy.count(), 1);
     }
     // If no overlay was created (capture unavailable), isCapturing stays false
+}
+
+void CaptureOverlayTests::captureControllerGlobalDragPinCaptureUsesPublicLifecycle()
+{
+    PinWindowManager pinManager;
+    CaptureController controller(&pinManager);
+    QSignalSpy pinCreatedSpy(&pinManager, &PinWindowManager::pinCreated);
+    QSignalSpy unavailableSpy(&controller, &CaptureController::captureUnavailable);
+
+    controller.beginGlobalDragPinCapture(QPoint(10, 10));
+    QCoreApplication::processEvents();
+
+    if (!controller.isCapturing()) {
+        QCOMPARE(unavailableSpy.count(), 1);
+        return;
+    }
+
+    controller.updateGlobalDragPinCapture(QPoint(50, 40));
+    controller.finishGlobalDragPinCapture(QPoint(50, 40));
+    QCoreApplication::processEvents();
+
+    QTRY_COMPARE(pinCreatedSpy.count(), 1);
+    QTRY_VERIFY(!controller.isCapturing());
+
+    const QList<QVariant> args = pinCreatedSpy.takeFirst();
+    auto* pin = qvariant_cast<PinWindow*>(args.at(0));
+    QVERIFY(pin != nullptr);
+    pin->close();
+    QCoreApplication::processEvents();
 }
 
 // ---------------------------------------------------------------------------

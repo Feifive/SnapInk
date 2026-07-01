@@ -40,7 +40,54 @@ void CaptureController::startRegionCapture()
     showOverlay(overlay);
 }
 
-void CaptureController::showOverlay(CaptureOverlay* overlay)
+void CaptureController::beginGlobalDragPinCapture(const QPoint& globalPos)
+{
+    if (!m_activeOverlay.isNull()) {
+        return;
+    }
+
+    const QRect virtualGeometry = ScreenCaptureService::virtualDesktopGeometry();
+    CaptureResult captureResult = ScreenCaptureService::captureScreens();
+    if (virtualGeometry.isEmpty() || captureResult.screens().isEmpty()) {
+        Q_EMIT captureUnavailable();
+        return;
+    }
+
+    auto* overlay = new CaptureOverlay(std::move(captureResult),
+                                       virtualGeometry,
+                                       CaptureOverlayMode::GlobalDragPin);
+    showOverlay(overlay, false);
+    overlay->beginExternalSelection(overlayLocalPointForGlobal(globalPos));
+}
+
+void CaptureController::updateGlobalDragPinCapture(const QPoint& globalPos)
+{
+    if (m_activeOverlay.isNull()) {
+        return;
+    }
+
+    m_activeOverlay->updateExternalSelection(overlayLocalPointForGlobal(globalPos));
+}
+
+void CaptureController::finishGlobalDragPinCapture(const QPoint& globalPos)
+{
+    if (m_activeOverlay.isNull()) {
+        return;
+    }
+
+    m_activeOverlay->finishExternalSelectionAndPin(overlayLocalPointForGlobal(globalPos));
+}
+
+void CaptureController::cancelGlobalDragPinCapture()
+{
+    if (m_activeOverlay.isNull()) {
+        return;
+    }
+
+    m_activeOverlay->cancelExternalSelection();
+}
+
+void CaptureController::showOverlay(CaptureOverlay* overlay, bool activate)
 {
     if (overlay == nullptr) {
         return;
@@ -62,9 +109,20 @@ void CaptureController::showOverlay(CaptureOverlay* overlay)
 
     overlay->show();
     overlay->raise();
-    overlay->activateWindow();
+    if (activate) {
+        overlay->activateWindow();
+    }
 
     Q_EMIT captureStarted();
+}
+
+QPoint CaptureController::overlayLocalPointForGlobal(const QPoint& globalPos) const
+{
+    if (m_activeOverlay.isNull()) {
+        return globalPos;
+    }
+
+    return globalPos - m_activeOverlay->geometry().topLeft();
 }
 
 void CaptureController::showCaptureUnavailable()

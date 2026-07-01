@@ -13,6 +13,12 @@ set(SNAPINK_CORE_SOURCES
     src/core/capture/ScreenCaptureService.h
     src/core/clipboard/ClipboardService.cpp
     src/core/clipboard/ClipboardService.h
+    src/core/globalmouse/GlobalMouseDragMonitor.cpp
+    src/core/globalmouse/GlobalMouseDragMonitor.h
+    src/core/globalmouse/GlobalMouseDragPlatform.cpp
+    src/core/globalmouse/GlobalMouseDragPlatform.h
+    src/core/globalmouse/GlobalMouseDragTracker.cpp
+    src/core/globalmouse/GlobalMouseDragTracker.h
 )
 
 set(SNAPINK_CAPTURE_SOURCES
@@ -60,6 +66,8 @@ qt_add_executable(SnapInk
     main.cpp
     src/app/CaptureController.cpp
     src/app/CaptureController.h
+    src/app/GlobalMouseController.cpp
+    src/app/GlobalMouseController.h
     src/app/HotkeyController.cpp
     src/app/HotkeyController.h
     src/app/mainwindow.cpp
@@ -93,6 +101,7 @@ endif()
 if(WIN32)
     target_sources(${PROJECT_NAME} PRIVATE
         src/core/hotkey/HotkeyPlatform_win.cpp
+        src/core/globalmouse/GlobalMouseDragPlatform_win.cpp
     )
 
     target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -105,16 +114,20 @@ if(WIN32)
 elseif(APPLE)
     target_sources(${PROJECT_NAME} PRIVATE
         src/core/hotkey/HotkeyPlatform_mac.cpp
+        src/core/globalmouse/GlobalMouseDragPlatform_mac.mm
     )
 
     find_library(CARBON_LIBRARY Carbon REQUIRED)
+    find_library(APPLICATIONSERVICES_LIBRARY ApplicationServices REQUIRED)
     target_link_libraries(${PROJECT_NAME} PRIVATE
         ${CARBON_LIBRARY}
+        ${APPLICATIONSERVICES_LIBRARY}
         "-framework AppKit"
     )
 elseif(UNIX)
     target_sources(${PROJECT_NAME} PRIVATE
         src/core/hotkey/HotkeyPlatform_linux.cpp
+        src/core/globalmouse/GlobalMouseDragPlatform_linux.cpp
     )
 endif()
 
@@ -124,6 +137,8 @@ qt_add_executable(SnapInkTests
     tests/capture_overlay_tests.cpp
     src/app/CaptureController.cpp
     src/app/CaptureController.h
+    src/app/GlobalMouseController.cpp
+    src/app/GlobalMouseController.h
     src/app/HotkeyController.cpp
     src/app/HotkeyController.h
     src/app/mainwindow.cpp
@@ -234,13 +249,52 @@ target_compile_features(CaptureInputControllerTests PRIVATE cxx_std_20)
 
 add_test(NAME CaptureInputControllerTests COMMAND CaptureInputControllerTests)
 
+qt_add_executable(GlobalMouseDragTrackerTests
+    tests/global_mouse_drag_tracker_tests.cpp
+    src/core/globalmouse/GlobalMouseDragTracker.cpp
+    src/core/globalmouse/GlobalMouseDragTracker.h
+)
+
+target_link_libraries(GlobalMouseDragTrackerTests
+    PRIVATE
+        Qt::Core
+        Qt::Test
+)
+
+target_compile_features(GlobalMouseDragTrackerTests PRIVATE cxx_std_20)
+
+add_test(NAME GlobalMouseDragTrackerTests COMMAND GlobalMouseDragTrackerTests)
+
+qt_add_executable(GlobalMouseDragMonitorTests
+    tests/global_mouse_drag_monitor_tests.cpp
+    src/core/globalmouse/GlobalMouseDragMonitor.cpp
+    src/core/globalmouse/GlobalMouseDragMonitor.h
+    src/core/globalmouse/GlobalMouseDragPlatform.cpp
+    src/core/globalmouse/GlobalMouseDragPlatform.h
+    src/core/globalmouse/GlobalMouseDragPlatform_linux.cpp
+    src/core/globalmouse/GlobalMouseDragTracker.cpp
+    src/core/globalmouse/GlobalMouseDragTracker.h
+)
+
+target_link_libraries(GlobalMouseDragMonitorTests
+    PRIVATE
+        Qt::Core
+        Qt::Test
+)
+
+target_compile_features(GlobalMouseDragMonitorTests PRIVATE cxx_std_20)
+
+add_test(NAME GlobalMouseDragMonitorTests COMMAND GlobalMouseDragMonitorTests)
+
 if(APPLE)
     target_sources(SnapInkTests PRIVATE
         src/core/hotkey/HotkeyPlatform_mac.cpp
+        src/core/globalmouse/GlobalMouseDragPlatform_mac.mm
     )
 
     target_link_libraries(SnapInkTests PRIVATE
         ${CARBON_LIBRARY}
+        ${APPLICATIONSERVICES_LIBRARY}
         "-framework AppKit"
     )
 

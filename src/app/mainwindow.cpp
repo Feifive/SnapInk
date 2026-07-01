@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 
 #include "CaptureController.h"
+#include "GlobalMouseController.h"
 #include "HotkeyController.h"
 #include "../core/hotkey/HotkeyConfig.h"
 #include "../ui/pin/PinWindowManager.h"
@@ -61,6 +62,7 @@ void MainWindow::init(const bool registerGlobalHotkeys)
     m_trayController->setCloseAllPinsEnabled(m_pinWindowManager->pinCount() > 0);
 
     m_hotkeyController = new HotkeyController(this, this);
+    m_globalMouseController = new GlobalMouseController(this, this);
 
     connect(m_hotkeyController, &HotkeyController::regionCaptureRequested, m_captureController,
             &CaptureController::startRegionCapture);
@@ -68,9 +70,27 @@ void MainWindow::init(const bool registerGlobalHotkeys)
     connect(m_hotkeyController, &HotkeyController::restorePinRequested, m_pinWindowManager,
             &PinWindowManager::restoreLastClosedPin);
 
+    connect(m_globalMouseController,
+            &GlobalMouseController::dragStarted,
+            m_captureController,
+            &CaptureController::beginGlobalDragPinCapture);
+    connect(m_globalMouseController,
+            &GlobalMouseController::dragMoved,
+            m_captureController,
+            &CaptureController::updateGlobalDragPinCapture);
+    connect(m_globalMouseController,
+            &GlobalMouseController::dragFinished,
+            m_captureController,
+            &CaptureController::finishGlobalDragPinCapture);
+    connect(m_globalMouseController,
+            &GlobalMouseController::dragCanceled,
+            m_captureController,
+            &CaptureController::cancelGlobalDragPinCapture);
+
     if (registerGlobalHotkeys)
     {
         m_hotkeyController->registerShortcuts();
+        m_globalMouseController->start();
     }
 }
 

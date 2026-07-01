@@ -5,6 +5,7 @@
 
 class QCloseEvent;
 class CaptureController;
+class GlobalMouseController;
 class HotkeyController;
 class PinWindowManager;
 class TrayController;
@@ -28,6 +29,7 @@ private:
 
     TrayController* m_trayController       = nullptr;
     CaptureController* m_captureController = nullptr;
+    GlobalMouseController* m_globalMouseController = nullptr;
     HotkeyController* m_hotkeyController   = nullptr;
     PinWindowManager* m_pinWindowManager   = nullptr;
     bool m_isQuitting                      = false;
