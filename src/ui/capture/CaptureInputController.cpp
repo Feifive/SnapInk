@@ -95,7 +95,7 @@ bool CaptureInputController::handleMousePress(QMouseEvent* event)
     }
 
     if (m_annotationController.hasActiveTextEditing()) {
-        if (activeTextItemContainsViewPos(event->pos())) {
+        if (activeTextItemContainsViewportPos(event->pos())) {
             return false;
         }
         if (m_callbacks.commitActiveTextEditing) {
@@ -257,10 +257,10 @@ bool CaptureInputController::canAdjustSelectionAt(const QPoint& overlayPos) cons
     return m_callbacks.canAdjustSelectionAt && m_callbacks.canAdjustSelectionAt(overlayPos);
 }
 
-bool CaptureInputController::activeTextItemContainsViewPos(const QPoint& viewportPos) const
+bool CaptureInputController::activeTextItemContainsViewportPos(const QPoint& viewportPos) const
 {
-    if (m_callbacks.activeTextItemContainsViewPos) {
-        return m_callbacks.activeTextItemContainsViewPos(viewportPos);
+    if (m_callbacks.activeTextItemContainsViewportPos) {
+        return m_callbacks.activeTextItemContainsViewportPos(viewportPos);
     }
     return false;
 }

@@ -301,7 +301,7 @@ void CaptureOverlay::paintSelectionChrome(QPainter& painter,
     painter.restore();
 }
 
-QPoint CaptureOverlay::widgetToImage(const QPointF& widgetPos) const
+QPoint CaptureOverlay::widgetToImagePos(const QPointF& widgetPos) const
 {
     const QSize bounds = m_virtualGeometry.size();
     if (bounds.isEmpty()) {
@@ -311,12 +311,6 @@ QPoint CaptureOverlay::widgetToImage(const QPointF& widgetPos) const
     const int x = qBound(0, qRound(widgetPos.x()), bounds.width());
     const int y = qBound(0, qRound(widgetPos.y()), bounds.height());
     return QPoint(x, y);
-}
-
-QPointF CaptureOverlay::widgetToSelection(const QPointF& widgetPos) const
-{
-    const QPoint imagePoint = widgetToImage(widgetPos);
-    return clampSelectionPoint(QPointF(imagePoint - m_selectionModel.selectionRect().topLeft()));
 }
 
 QRect CaptureOverlay::imageToWidgetRect(const QRect& imageRect) const
@@ -329,27 +323,27 @@ QRect CaptureOverlay::normalizedImageSelection() const
     return m_selectionModel.currentSelection();
 }
 
-bool CaptureOverlay::isInsideSelection(const QPoint& pos) const
+bool CaptureOverlay::isInsideSelection(const QPoint& overlayPos) const
 {
-    return m_selectionModel.contains(pos);
+    return m_selectionModel.contains(overlayPos);
 }
 
-SelectionHandle CaptureOverlay::hitTestSelectionHandle(const QPoint& pos) const
+SelectionHandle CaptureOverlay::hitTestSelectionHandle(const QPoint& overlayPos) const
 {
-    return m_selectionModel.hitTestHandle(pos);
+    return m_selectionModel.hitTestHandle(overlayPos);
 }
 
-void CaptureOverlay::updateSelectionCursor(const QPoint& pos)
+void CaptureOverlay::updateSelectionCursor(const QPoint& overlayPos)
 {
     if (m_annotationController.currentTool() != CaptureTool::Select || m_state != CaptureState::Editing) {
         setCursor(Qt::CrossCursor);
         return;
     }
 
-    const SelectionHandle handle = hitTestSelectionHandle(pos);
+    const SelectionHandle handle = hitTestSelectionHandle(overlayPos);
     if (handle != SelectionHandle::None) {
         setCursor(cursorForSelectionHandle(handle));
-    } else if (isInsideSelection(pos)) {
+    } else if (isInsideSelection(overlayPos)) {
         setCursor(Qt::SizeAllCursor);
     } else {
         setCursor(Qt::ArrowCursor);
@@ -377,11 +371,11 @@ QCursor CaptureOverlay::cursorForSelectionHandle(SelectionHandle handle) const
     return Qt::ArrowCursor;
 }
 
-QPointF CaptureOverlay::clampSelectionPoint(const QPointF& point) const
+QPointF CaptureOverlay::clampSelectionPoint(const QPointF& selectionPos) const
 {
     const QRect selection = m_selectionModel.selectionRect();
-    return QPointF(qBound<qreal>(0.0, point.x(), selection.width()),
-                   qBound<qreal>(0.0, point.y(), selection.height()));
+    return QPointF(qBound<qreal>(0.0, selectionPos.x(), selection.width()),
+                   qBound<qreal>(0.0, selectionPos.y(), selection.height()));
 }
 
 QRectF CaptureOverlay::selectionSceneRect() const
@@ -389,34 +383,34 @@ QRectF CaptureOverlay::selectionSceneRect() const
     return QRectF(QPointF(0, 0), QSizeF(m_selectionModel.selectionRect().size()));
 }
 
-void CaptureOverlay::beginMoveSelection(const QPoint& globalPos)
+void CaptureOverlay::beginMoveSelection(const QPoint& overlayPos)
 {
     m_annotationController.commitActiveTextEditing();
     m_annotationController.clearInteractionState();
-    m_selectionModel.beginMove(globalPos);
+    m_selectionModel.beginMove(overlayPos);
     setCursor(Qt::SizeAllCursor);
 }
 
-void CaptureOverlay::updateMoveSelection(const QPoint& globalPos)
+void CaptureOverlay::updateMoveSelection(const QPoint& overlayPos)
 {
     const QRect oldRect = m_selectionModel.selectionRect();
-    if (m_selectionModel.updateMove(globalPos)) {
+    if (m_selectionModel.updateMove(overlayPos)) {
         applySelectionModelChange(oldRect);
     }
 }
 
-void CaptureOverlay::beginResizeSelection(SelectionHandle handle, const QPoint& globalPos)
+void CaptureOverlay::beginResizeSelection(SelectionHandle handle, const QPoint& overlayPos)
 {
     m_annotationController.commitActiveTextEditing();
     m_annotationController.clearInteractionState();
-    m_selectionModel.beginResize(handle, globalPos);
+    m_selectionModel.beginResize(handle, overlayPos);
     setCursor(cursorForSelectionHandle(handle));
 }
 
-void CaptureOverlay::updateResizeSelection(const QPoint& globalPos)
+void CaptureOverlay::updateResizeSelection(const QPoint& overlayPos)
 {
     const QRect oldRect = m_selectionModel.selectionRect();
-    if (m_selectionModel.updateResize(globalPos)) {
+    if (m_selectionModel.updateResize(overlayPos)) {
         applySelectionModelChange(oldRect);
     }
 }
@@ -434,9 +428,9 @@ void CaptureOverlay::resizeSelectionByWheel(int pixelDelta)
     }
 }
 
-bool CaptureOverlay::canAdjustSelectionAt(const QPoint& pos) const
+bool CaptureOverlay::canAdjustSelectionAt(const QPoint& overlayPos) const
 {
-    return hitTestSelectionHandle(pos) != SelectionHandle::None || isInsideSelection(pos);
+    return hitTestSelectionHandle(overlayPos) != SelectionHandle::None || isInsideSelection(overlayPos);
 }
 
 void CaptureOverlay::applySelectionModelChange(const QRect& oldRect)
@@ -449,13 +443,13 @@ void CaptureOverlay::applySelectionModelChange(const QRect& oldRect)
     const qreal dx = oldRect.left() - selection.left();
     const qreal dy = oldRect.top() - selection.top();
     if (!qFuzzyIsNull(dx) || !qFuzzyIsNull(dy)) {
-        shiftAllAnnotations(dx, dy);
+        m_annotationController.shiftAllAnnotations(QPointF(dx, dy));
     }
 
     m_annotationController.setSceneRect(selectionSceneRect());
     updateSelectionBackground();
-    updateAnnotationViewGeometry();
-    updateToolbarPosition();
+    syncAnnotationViewGeometry();
+    updateToolbarGeometry();
     update();
     if (m_selectionChromeLayer != nullptr) {
         m_selectionChromeLayer->update();
@@ -469,22 +463,7 @@ void CaptureOverlay::updateSelectionBackground()
     m_annotationController.setBackgroundPixmap(selectionPixmap);
 }
 
-void CaptureOverlay::updateAnnotationViewGeometry()
-{
-    syncAnnotationViewGeometry();
-}
-
-void CaptureOverlay::updateToolbarPosition()
-{
-    updateToolbarGeometry();
-}
-
-void CaptureOverlay::shiftAllAnnotations(qreal dx, qreal dy)
-{
-    m_annotationController.shiftAllAnnotations(QPointF(dx, dy));
-}
-
-void CaptureOverlay::expandSelectionToPoint(const QPoint& imagePoint)
+void CaptureOverlay::expandSelectionToImagePos(const QPoint& imagePos)
 {
     if (m_state != CaptureState::Editing || m_selectionModel.selectionRect().isEmpty()) {
         return;
@@ -498,16 +477,16 @@ void CaptureOverlay::expandSelectionToPoint(const QPoint& imagePoint)
     const QRect oldRect = m_selectionModel.selectionRect();
     QRect expanded = oldRect;
 
-    if (imagePoint.x() < oldRect.left()) {
-        expanded.setLeft(imagePoint.x());
-    } else if (imagePoint.x() > oldRect.right()) {
-        expanded.setRight(imagePoint.x());
+    if (imagePos.x() < oldRect.left()) {
+        expanded.setLeft(imagePos.x());
+    } else if (imagePos.x() > oldRect.right()) {
+        expanded.setRight(imagePos.x());
     }
 
-    if (imagePoint.y() < oldRect.top()) {
-        expanded.setTop(imagePoint.y());
-    } else if (imagePoint.y() > oldRect.bottom()) {
-        expanded.setBottom(imagePoint.y());
+    if (imagePos.y() < oldRect.top()) {
+        expanded.setTop(imagePos.y());
+    } else if (imagePos.y() > oldRect.bottom()) {
+        expanded.setBottom(imagePos.y());
     }
 
     m_selectionModel.setSelectionRect(expanded);
@@ -588,8 +567,8 @@ CaptureInputController::Callbacks CaptureOverlay::makeInputCallbacks()
     callbacks.commitActiveTextEditing = [this]() {
         m_annotationController.commitActiveTextEditing();
     };
-    callbacks.activeTextItemContainsViewPos = [this](const QPoint& viewportPos) {
-        return m_annotationController.activeTextItemContainsViewPos(viewportPos);
+    callbacks.activeTextItemContainsViewportPos = [this](const QPoint& viewportPos) {
+        return m_annotationController.activeTextItemContainsViewportPos(viewportPos);
     };
     callbacks.forwardShortcut = [this](QKeyEvent* event) {
         keyPressEvent(event);
@@ -689,9 +668,9 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event)
         return;
     }
 
-    const QPoint imagePoint = widgetToImage(event->position());
+    const QPoint imagePos = widgetToImagePos(event->position());
     if (m_state == CaptureState::Selecting) {
-        m_selectionModel.beginSelection(imagePoint);
+        m_selectionModel.beginSelection(imagePos);
         m_annotationController.view()->hide();
         if (m_selectionChromeLayer != nullptr) {
             m_selectionChromeLayer->hide();
@@ -701,16 +680,16 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event)
     }
 
     if (m_state == CaptureState::Editing && m_annotationController.currentTool() == CaptureTool::Select) {
-        const SelectionHandle handle = hitTestSelectionHandle(imagePoint);
+        const SelectionHandle handle = hitTestSelectionHandle(imagePos);
         if (handle != SelectionHandle::None) {
-            beginResizeSelection(handle, imagePoint);
+            beginResizeSelection(handle, imagePos);
             return;
         }
-        if (isInsideSelection(imagePoint)) {
-            beginMoveSelection(imagePoint);
+        if (isInsideSelection(imagePos)) {
+            beginMoveSelection(imagePos);
         } else {
             // Left click outside selection → expand selection to include click point
-            expandSelectionToPoint(imagePoint);
+            expandSelectionToImagePos(imagePos);
         }
     }
 }
@@ -718,22 +697,22 @@ void CaptureOverlay::mousePressEvent(QMouseEvent* event)
 void CaptureOverlay::mouseMoveEvent(QMouseEvent* event)
 {
     if (m_state == CaptureState::Selecting && m_selectionModel.hasSelection()) {
-        m_selectionModel.updateSelection(widgetToImage(event->position()));
+        m_selectionModel.updateSelection(widgetToImagePos(event->position()));
         update();
         return;
     }
 
     if (m_state == CaptureState::Editing && m_annotationController.currentTool() == CaptureTool::Select) {
-        const QPoint imagePoint = widgetToImage(event->position());
+        const QPoint imagePos = widgetToImagePos(event->position());
         if (m_selectionModel.interaction() == SelectionInteraction::Moving) {
-            updateMoveSelection(imagePoint);
+            updateMoveSelection(imagePos);
             return;
         }
         if (m_selectionModel.interaction() == SelectionInteraction::Resizing) {
-            updateResizeSelection(imagePoint);
+            updateResizeSelection(imagePos);
             return;
         }
-        updateSelectionCursor(imagePoint);
+        updateSelectionCursor(imagePos);
     }
 }
 
@@ -744,7 +723,7 @@ void CaptureOverlay::mouseReleaseEvent(QMouseEvent* event)
     }
 
     if (m_state == CaptureState::Selecting && m_selectionModel.hasSelection()) {
-        m_selectionModel.updateSelection(widgetToImage(event->position()));
+        m_selectionModel.updateSelection(widgetToImagePos(event->position()));
         if (!m_selectionModel.commitSelection()) {
             update();
             return;

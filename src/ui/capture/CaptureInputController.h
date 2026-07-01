@@ -43,7 +43,7 @@ public:
         std::function<void(const QPointF& selectionPos)> beginTextEditing;
 
         std::function<void()> commitActiveTextEditing;
-        std::function<bool(const QPoint& viewportPos)> activeTextItemContainsViewPos;
+        std::function<bool(const QPoint& viewportPos)> activeTextItemContainsViewportPos;
 
         std::function<void(QKeyEvent* event)> forwardShortcut;
         std::function<void()> reselect;
@@ -70,7 +70,7 @@ private:
     SelectionHandle hitTestHandle(const QPoint& overlayPos) const;
     bool isInsideSelection(const QPoint& overlayPos) const;
     bool canAdjustSelectionAt(const QPoint& overlayPos) const;
-    bool activeTextItemContainsViewPos(const QPoint& viewportPos) const;
+    bool activeTextItemContainsViewportPos(const QPoint& viewportPos) const;
 
     AnnotationSceneController& m_annotationController;
     CaptureSelectionModel& m_selectionModel;

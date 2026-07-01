@@ -18,14 +18,14 @@ CaptureImageComposer::CaptureImageComposer(const CaptureResult& captureResult,
 {
 }
 
-QRect CaptureImageComposer::overlayLocalToGlobalLogical(const QRect& localRect) const
+QRect CaptureImageComposer::overlayLocalToGlobalLogical(const QRect& overlayLocalRect) const
 {
-    return localRect.translated(m_virtualGeometry.topLeft());
+    return overlayLocalRect.translated(m_virtualGeometry.topLeft());
 }
 
-QRect CaptureImageComposer::globalToOverlayLocalLogical(const QRect& globalRect) const
+QRect CaptureImageComposer::globalToOverlayLocalLogical(const QRect& globalLogicalRect) const
 {
-    return globalRect.translated(-m_virtualGeometry.topLeft());
+    return globalLogicalRect.translated(-m_virtualGeometry.topLeft());
 }
 
 qreal CaptureImageComposer::effectiveDevicePixelRatio(const QRect& overlayLocalRect) const

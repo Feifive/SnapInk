@@ -141,9 +141,9 @@ bool AnnotationSceneController::hasActiveTextEditing() const
     return m_activeTextItem != nullptr;
 }
 
-bool AnnotationSceneController::activeTextItemContainsViewPos(const QPoint& viewPos) const
+bool AnnotationSceneController::activeTextItemContainsViewportPos(const QPoint& viewportPos) const
 {
-    return m_activeTextItem != nullptr && m_view->itemAt(viewPos) == m_activeTextItem;
+    return m_activeTextItem != nullptr && m_view->itemAt(viewportPos) == m_activeTextItem;
 }
 
 void AnnotationSceneController::beginAnnotation(const QPointF& selectionPos)

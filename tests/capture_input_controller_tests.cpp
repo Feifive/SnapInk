@@ -4,6 +4,8 @@
 #include "../src/ui/capture/CaptureSelectionModel.h"
 
 #include <QGraphicsView>
+#include <QGraphicsItem>
+#include <QGraphicsScene>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QTest>
@@ -131,7 +133,7 @@ CaptureInputController::Callbacks makeCallbacks(CallbackLog& log,
         log.callOrder.append(QStringLiteral("commitActiveTextEditing"));
         annotationController.commitActiveTextEditing();
     };
-    callbacks.activeTextItemContainsViewPos = [&log](const QPoint&) {
+    callbacks.activeTextItemContainsViewportPos = [&log](const QPoint&) {
         ++log.activeTextHitTestCount;
         return log.activeTextContainsViewPos;
     };
@@ -177,26 +179,38 @@ struct ControllerHarness
     }
 };
 
-QMouseEvent mouseEvent(QEvent::Type type, const QPoint& pos, Qt::MouseButton button)
+QMouseEvent mouseEvent(QEvent::Type type, const QPoint& viewportPos, Qt::MouseButton button)
 {
     return QMouseEvent(type,
-                       QPointF(pos),
-                       QPointF(pos),
+                       QPointF(viewportPos),
+                       QPointF(viewportPos),
                        button,
                        button == Qt::NoButton ? Qt::NoButton : Qt::MouseButtons(button),
                        Qt::NoModifier);
 }
 
-QWheelEvent wheelEvent(const QPoint& pos, int angleDeltaY)
+QWheelEvent wheelEvent(const QPoint& viewportPos, int angleDeltaY)
 {
-    return QWheelEvent(QPointF(pos),
-                       QPointF(pos),
+    return QWheelEvent(QPointF(viewportPos),
+                       QPointF(viewportPos),
                        QPoint(),
                        QPoint(0, angleDeltaY),
                        Qt::NoButton,
                        Qt::NoModifier,
                        Qt::NoScrollPhase,
                        false);
+}
+
+template <typename T>
+QList<T*> sceneItemsOfType(QGraphicsScene* scene)
+{
+    QList<T*> result;
+    for (QGraphicsItem* item : scene->items()) {
+        if (auto* typed = dynamic_cast<T*>(item)) {
+            result.append(typed);
+        }
+    }
+    return result;
 }
 }
 
@@ -216,6 +230,8 @@ private slots:
     void textToolPressBeginsTextEditing();
     void textEditingPressInsideTextPassesThrough();
     void textEditingPressOutsideCommitsBeforeRouting();
+    void textEditingPressOutsideWithRectToolCommitsThenStartsPreview();
+    void textEditingPressOutsideWithSelectToolCommitsThenBeginsMove();
     void shortcutKeyPressForwardsToOverlay();
     void plainCharacterKeyPressPassesThrough();
     void eventsFromOtherObjectsAreIgnored();
@@ -417,6 +433,59 @@ void CaptureInputControllerTests::textEditingPressOutsideCommitsBeforeRouting()
     QCOMPARE(harness.log.beginTextEditingCount, 1);
     QCOMPARE(harness.log.callOrder.at(0), QStringLiteral("commitActiveTextEditing"));
     QCOMPARE(harness.log.callOrder.at(1), QStringLiteral("beginTextEditing"));
+}
+
+void CaptureInputControllerTests::textEditingPressOutsideWithRectToolCommitsThenStartsPreview()
+{
+    ControllerHarness harness;
+    harness.annotationController.setCurrentTool(CaptureTool::Rect);
+    harness.annotationController.beginTextEditing(QPointF(4.0, 5.0));
+    sceneItemsOfType<TextAnnotationItem>(harness.annotationController.scene()).first()->setPlainText(QStringLiteral("Old"));
+    harness.log.activeTextContainsViewPos = false;
+    auto controller = harness.makeController();
+    QMouseEvent press = mouseEvent(QEvent::MouseButtonPress, QPoint(12, 9), Qt::LeftButton);
+    QMouseEvent move = mouseEvent(QEvent::MouseMove, QPoint(30, 20), Qt::NoButton);
+    QMouseEvent release = mouseEvent(QEvent::MouseButtonRelease, QPoint(30, 20), Qt::LeftButton);
+
+    QVERIFY(controller.handleViewportEvent(harness.view()->viewport(), &press, harness.view(), true));
+    QVERIFY(harness.annotationController.hasActivePreview());
+    QVERIFY(controller.handleViewportEvent(harness.view()->viewport(), &move, harness.view(), true));
+    QVERIFY(controller.handleViewportEvent(harness.view()->viewport(), &release, harness.view(), true));
+
+    QCOMPARE(harness.log.commitActiveTextEditingCount, 1);
+    QCOMPARE(harness.log.beginAnnotationCount, 1);
+    QCOMPARE(harness.log.beginTextEditingCount, 0);
+    QCOMPARE(harness.log.callOrder.at(0), QStringLiteral("commitActiveTextEditing"));
+    QCOMPARE(harness.log.callOrder.at(1), QStringLiteral("beginAnnotation"));
+    QCOMPARE(sceneItemsOfType<TextAnnotationItem>(harness.annotationController.scene()).size(), 1);
+    QCOMPARE(sceneItemsOfType<RectAnnotationItem>(harness.annotationController.scene()).size(), 1);
+    QVERIFY(harness.annotationController.canUndo());
+}
+
+void CaptureInputControllerTests::textEditingPressOutsideWithSelectToolCommitsThenBeginsMove()
+{
+    ControllerHarness harness;
+    harness.annotationController.setCurrentTool(CaptureTool::Select);
+    harness.annotationController.beginTextEditing(QPointF(4.0, 5.0));
+    sceneItemsOfType<TextAnnotationItem>(harness.annotationController.scene()).first()->setPlainText(QStringLiteral("Old"));
+    harness.log.activeTextContainsViewPos = false;
+    auto controller = harness.makeController();
+    QMouseEvent event = mouseEvent(QEvent::MouseButtonPress, QPoint(20, 15), Qt::LeftButton);
+
+    const bool handled = controller.handleViewportEvent(harness.view()->viewport(),
+                                                        &event,
+                                                        harness.view(),
+                                                        true);
+
+    QVERIFY(handled);
+    QCOMPARE(harness.log.commitActiveTextEditingCount, 1);
+    QCOMPARE(harness.log.beginMoveCount, 1);
+    QCOMPARE(harness.log.beginTextEditingCount, 0);
+    QCOMPARE(harness.log.callOrder.at(0), QStringLiteral("commitActiveTextEditing"));
+    QCOMPARE(harness.log.callOrder.at(1), QStringLiteral("beginMove"));
+    QCOMPARE(harness.selectionModel.interaction(), SelectionInteraction::Moving);
+    QCOMPARE(sceneItemsOfType<TextAnnotationItem>(harness.annotationController.scene()).size(), 1);
+    QVERIFY(harness.annotationController.canUndo());
 }
 
 void CaptureInputControllerTests::shortcutKeyPressForwardsToOverlay()

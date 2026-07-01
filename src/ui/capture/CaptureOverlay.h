@@ -77,35 +77,29 @@ protected:
 private:
     // ----- coordinate helpers -------------------------------------------------
     /// Widget position → logical image coordinate (identity on this overlay).
-    QPoint widgetToImage(const QPointF& widgetPos) const;
-
-    /// Widget position → selection-relative logical coordinate.
-    QPointF widgetToSelection(const QPointF& widgetPos) const;
+    QPoint widgetToImagePos(const QPointF& widgetPos) const;
 
     /// Logical image rect → widget rect (identity on this overlay).
     QRect imageToWidgetRect(const QRect& imageRect) const;
 
     // ----- selection ----------------------------------------------------------
     QRect normalizedImageSelection() const;
-    bool isInsideSelection(const QPoint& pos) const;
-    SelectionHandle hitTestSelectionHandle(const QPoint& pos) const;
-    void updateSelectionCursor(const QPoint& pos);
+    bool isInsideSelection(const QPoint& overlayPos) const;
+    SelectionHandle hitTestSelectionHandle(const QPoint& overlayPos) const;
+    void updateSelectionCursor(const QPoint& overlayPos);
     QCursor cursorForSelectionHandle(SelectionHandle handle) const;
-    QPointF clampSelectionPoint(const QPointF& point) const;
+    QPointF clampSelectionPoint(const QPointF& selectionPos) const;
     QRectF selectionSceneRect() const;
-    void beginMoveSelection(const QPoint& globalPos);
-    void updateMoveSelection(const QPoint& globalPos);
-    void beginResizeSelection(SelectionHandle handle, const QPoint& globalPos);
-    void updateResizeSelection(const QPoint& globalPos);
+    void beginMoveSelection(const QPoint& overlayPos);
+    void updateMoveSelection(const QPoint& overlayPos);
+    void beginResizeSelection(SelectionHandle handle, const QPoint& overlayPos);
+    void updateResizeSelection(const QPoint& overlayPos);
     void finishSelectionInteraction();
     void resizeSelectionByWheel(int pixelDelta);
-    bool canAdjustSelectionAt(const QPoint& pos) const;
+    bool canAdjustSelectionAt(const QPoint& overlayPos) const;
     void applySelectionModelChange(const QRect& oldRect);
     void updateSelectionBackground();
-    void updateAnnotationViewGeometry();
-    void updateToolbarPosition();
-    void shiftAllAnnotations(qreal dx, qreal dy);
-    void expandSelectionToPoint(const QPoint& imagePoint);
+    void expandSelectionToImagePos(const QPoint& imagePos);
     QRect normalizeSelectionForEditing(const QRect& imageRect) const;
 
     // ----- annotation drawing -------------------------------------------------

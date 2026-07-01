@@ -45,7 +45,7 @@ public:
 
     bool hasActivePreview() const;
     bool hasActiveTextEditing() const;
-    bool activeTextItemContainsViewPos(const QPoint& viewPos) const;
+    bool activeTextItemContainsViewportPos(const QPoint& viewportPos) const;
 
     void beginAnnotation(const QPointF& selectionPos);
     void updateAnnotation(const QPointF& selectionPos);

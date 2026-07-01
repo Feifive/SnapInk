@@ -112,6 +112,19 @@ QList<T*> sceneItemsOfType(QGraphicsScene* scene)
     return result;
 }
 
+template <typename T>
+T* firstSceneItemOfType(QGraphicsScene* scene)
+{
+    const QList<T*> items = sceneItemsOfType<T>(scene);
+    return items.isEmpty() ? nullptr : items.first();
+}
+
+QGraphicsPixmapItem* backgroundPixmapItemFor(QGraphicsScene* scene)
+{
+    const QList<QGraphicsPixmapItem*> items = sceneItemsOfType<QGraphicsPixmapItem>(scene);
+    return items.isEmpty() ? nullptr : items.first();
+}
+
 QWidget* selectionChromeFor(CaptureOverlay& overlay)
 {
     auto* chrome = overlay.findChild<QWidget*>(QStringLiteral("SelectionChromeLayer"));
@@ -225,8 +238,12 @@ private slots:
     void overlayEditingRenderUsesSelectionSize();
     void overlayAnnotationsUseSelectionRelativeCoordinates();
     void overlayUndoRedoUpdatesRenderedResult();
+    void activeTextClickInsideKeepsEditingWithoutCreatingAnotherTextItem();
+    void activeTextOutsideClickWithTextToolCommitsOldTextAndStartsNewEditor();
+    void activeTextExportCommitsTextAndUndoRemovesIt();
     void renderResultImageCommitsTextAndKeepsEditingSessionOpen();
     void renderResultImageExcludesActivePreview();
+    void activePreviewCanBeFinishedAfterExport();
     void copyActionBuildsImageAndTransitionsToFinished();
     void saveActionCancelKeepsEditingSession();
     void saveActionFailureKeepsEditingSession();
@@ -245,7 +262,10 @@ private slots:
     void resizingFromTopLeftShiftsAnnotationsToKeepGlobalPosition();
     void resizingFromBottomRightKeepsAnnotationLocalPosition();
     void selectToolWheelResizesByOnePixel();
+    void selectToolWheelKeepsSceneBackgroundViewToolbarAndAnnotationsInSync();
     void annotationToolDoesNotMoveSelection();
+    void cancelRemovesActiveTextAndCloseIgnoresFurtherInput();
+    void finishedOverlayIgnoresFurtherInputAfterClosing();
     void pinWindowUsesToolTopmostFramelessFlagsAndDeletesOnClose();
 #ifdef Q_OS_MACOS
     void macWindowHelperIgnoresWidgetsWithoutNativeWindows();
@@ -384,6 +404,99 @@ void CaptureOverlayTests::overlayUndoRedoUpdatesRenderedResult()
     QCOMPARE(overlay.renderResultImage().pixelColor(1, 1), QColor(Qt::red));
 }
 
+void CaptureOverlayTests::activeTextClickInsideKeepsEditingWithoutCreatingAnotherTextItem()
+{
+    TestableCaptureOverlay overlay(makeSingleScreenResult(120, 80), QRect(0, 0, 120, 80));
+    overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+    overlay.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&overlay));
+    overlay.enterEditing(QRect(10, 10, 80, 40));
+
+    triggerToolbarTool(overlay, CaptureTool::Text);
+    QGraphicsView* view = annotationViewFor(overlay);
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(8, 10));
+    QTest::keyClicks(view->viewport(), QStringLiteral("Snap"));
+    TextAnnotationItem* activeText = firstSceneItemOfType<TextAnnotationItem>(view->scene());
+    QVERIFY(activeText != nullptr);
+    const QPoint insideTextViewportPos =
+        view->mapFromScene(activeText->mapToScene(activeText->boundingRect().center()));
+
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, insideTextViewportPos);
+
+    QCOMPARE(sceneItemsOfType<TextAnnotationItem>(view->scene()).size(), 1);
+    QCOMPARE(firstSceneItemOfType<TextAnnotationItem>(view->scene()), activeText);
+    QVERIFY(!overlay.canUndo());
+    QVERIFY(activeText->textInteractionFlags().testFlag(Qt::TextEditorInteraction));
+}
+
+void CaptureOverlayTests::activeTextOutsideClickWithTextToolCommitsOldTextAndStartsNewEditor()
+{
+    TestableCaptureOverlay overlay(makeSingleScreenResult(120, 80), QRect(0, 0, 120, 80));
+    overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+    overlay.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&overlay));
+    overlay.enterEditing(QRect(10, 10, 80, 40));
+
+    triggerToolbarTool(overlay, CaptureTool::Text);
+    QGraphicsView* view = annotationViewFor(overlay);
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(6, 8));
+    QTest::keyClicks(view->viewport(), QStringLiteral("Old"));
+    QVERIFY(!overlay.canUndo());
+
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(72, 34));
+
+    const QList<TextAnnotationItem*> textItems = sceneItemsOfType<TextAnnotationItem>(view->scene());
+    QCOMPARE(textItems.size(), 2);
+    QVERIFY(overlay.canUndo());
+
+    int activeTextCount = 0;
+    int committedTextCount = 0;
+    for (TextAnnotationItem* item : textItems) {
+        if (item->textInteractionFlags().testFlag(Qt::TextEditorInteraction)) {
+            ++activeTextCount;
+        } else {
+            ++committedTextCount;
+        }
+    }
+    QCOMPARE(activeTextCount, 1);
+    QCOMPARE(committedTextCount, 1);
+
+    overlay.undo();
+
+    QCOMPARE(sceneItemsOfType<TextAnnotationItem>(view->scene()).size(), 0);
+    QVERIFY(!overlay.canUndo());
+    QVERIFY(overlay.canRedo());
+}
+
+void CaptureOverlayTests::activeTextExportCommitsTextAndUndoRemovesIt()
+{
+    TestableCaptureOverlay overlay(makeSingleScreenResult(120, 80), QRect(0, 0, 120, 80));
+    overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+    overlay.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&overlay));
+    overlay.enterEditing(QRect(10, 10, 80, 40));
+
+    triggerToolbarTool(overlay, CaptureTool::Text);
+    QGraphicsView* view = annotationViewFor(overlay);
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(6, 8));
+    QTest::keyClicks(view->viewport(), QStringLiteral("Snap"));
+
+    const QImage result = overlay.renderResultImage();
+
+    QVERIFY(!result.isNull());
+    QCOMPARE(overlay.state(), CaptureState::Editing);
+    QVERIFY(overlay.isVisible());
+    QVERIFY(overlay.canUndo());
+    const QList<TextAnnotationItem*> textItems = sceneItemsOfType<TextAnnotationItem>(view->scene());
+    QCOMPARE(textItems.size(), 1);
+    QVERIFY(!textItems.first()->textInteractionFlags().testFlag(Qt::TextEditorInteraction));
+
+    overlay.undo();
+
+    QCOMPARE(sceneItemsOfType<TextAnnotationItem>(view->scene()).size(), 0);
+    QVERIFY(!overlay.canUndo());
+}
+
 void CaptureOverlayTests::renderResultImageCommitsTextAndKeepsEditingSessionOpen()
 {
     TestableCaptureOverlay overlay(makeSingleScreenResult(120, 80), QRect(0, 0, 120, 80));
@@ -423,9 +536,35 @@ void CaptureOverlayTests::renderResultImageExcludesActivePreview()
 
     QVERIFY(!result.isNull());
     QCOMPARE(result.pixelColor(2, 2), QColor(Qt::white));
-    QVERIFY(view->scene()->items().size() > 1);
+    QCOMPARE(sceneItemsOfType<RectAnnotationItem>(view->scene()).size(), 1);
+    QVERIFY(!overlay.canUndo());
     QCOMPARE(overlay.state(), CaptureState::Editing);
     QVERIFY(overlay.isVisible());
+}
+
+void CaptureOverlayTests::activePreviewCanBeFinishedAfterExport()
+{
+    TestableCaptureOverlay overlay(makeSingleScreenResult(120, 80), QRect(0, 0, 120, 80));
+    overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+    overlay.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&overlay));
+    overlay.enterEditing(QRect(10, 10, 80, 40));
+
+    triggerToolbarTool(overlay, CaptureTool::Rect);
+    QGraphicsView* view = annotationViewFor(overlay);
+    QTest::mousePress(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(2, 2));
+    QTest::mouseMove(view->viewport(), QPoint(30, 20));
+
+    const QImage exportedDuringPreview = overlay.renderResultImage();
+    QVERIFY(!exportedDuringPreview.isNull());
+    QCOMPARE(exportedDuringPreview.pixelColor(2, 2), QColor(Qt::white));
+    QVERIFY(!overlay.canUndo());
+
+    QTest::mouseRelease(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(30, 20));
+
+    QVERIFY(overlay.canUndo());
+    QCOMPARE(sceneItemsOfType<RectAnnotationItem>(view->scene()).size(), 1);
+    QCOMPARE(overlay.renderResultImage().pixelColor(2, 2), QColor(Qt::red));
 }
 
 void CaptureOverlayTests::copyActionBuildsImageAndTransitionsToFinished()
@@ -499,6 +638,8 @@ void CaptureOverlayTests::pinActionEmitsImageSourceRectAndTransitionsToFinished(
     overlay.show();
     QVERIFY(QTest::qWaitForWindowExposed(&overlay));
     overlay.enterEditing(QRect(20, 20, 40, 30));
+    overlay.addAnnotationItem(new RectAnnotationItem(QRectF(2.0, 2.0, 10.0, 8.0),
+                                                     QPen(Qt::red, 3.0)));
     QSignalSpy pinSpy(&overlay, &CaptureOverlay::pinRequested);
 
     triggerToolbarPin(overlay);
@@ -510,6 +651,7 @@ void CaptureOverlayTests::pinActionEmitsImageSourceRectAndTransitionsToFinished(
     QVERIFY(!pinnedImage.isNull());
     QCOMPARE(pinnedImage.size(), QSize(40, 30));
     QCOMPARE(sourceRect, QRect(-30, -10, 40, 30));
+    QCOMPARE(pinnedImage.pixelColor(2, 2), QColor(Qt::red));
     QCOMPARE(overlay.state(), CaptureState::Finished);
     QVERIFY(!overlay.isVisible());
 }
@@ -863,6 +1005,42 @@ void CaptureOverlayTests::selectToolWheelResizesByOnePixel()
     QCOMPARE(view->geometry(), QRect(19, 19, 32, 22));
 }
 
+void CaptureOverlayTests::selectToolWheelKeepsSceneBackgroundViewToolbarAndAnnotationsInSync()
+{
+    TestableCaptureOverlay overlay(makeSingleScreenResult(800, 600), QRect(0, 0, 800, 600));
+    overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+    overlay.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&overlay));
+    overlay.enterEditing(QRect(60, 50, 120, 80));
+
+    auto* item = new RectAnnotationItem(QRectF(5.0, 5.0, 12.0, 10.0), QPen(Qt::red, 3.0));
+    overlay.addAnnotationItem(item);
+    QGraphicsView* view = annotationViewFor(overlay);
+    CaptureToolbar* toolbar = toolbarFor(overlay);
+    const QRect oldToolbarGeometry = toolbar->geometry();
+
+    QWheelEvent wheelEvent(QPointF(20, 20),
+                           view->viewport()->mapToGlobal(QPoint(20, 20)),
+                           QPoint(),
+                           QPoint(0, 120),
+                           Qt::NoButton,
+                           Qt::NoModifier,
+                           Qt::NoScrollPhase,
+                           false);
+    QApplication::sendEvent(view->viewport(), &wheelEvent);
+
+    QCOMPARE(view->geometry(), QRect(59, 49, 122, 82));
+    QCOMPARE(view->sceneRect(), QRectF(0.0, 0.0, 122.0, 82.0));
+    auto* backgroundItem = backgroundPixmapItemFor(view->scene());
+    QVERIFY(backgroundItem != nullptr);
+    QCOMPARE(backgroundItem->pixmap().size(), QSize(122, 82));
+    QCOMPARE(item->pos(), QPointF(1.0, 1.0));
+    QVERIFY(toolbar->isVisible());
+    QVERIFY(!toolbar->geometry().isEmpty());
+    QVERIFY(toolbar->geometry() != oldToolbarGeometry);
+    QCOMPARE(overlay.renderResultImage().pixelColor(7, 7), QColor(Qt::red));
+}
+
 void CaptureOverlayTests::annotationToolDoesNotMoveSelection()
 {
     CaptureResult cr = makeSingleScreenResult(100, 80);
@@ -879,6 +1057,79 @@ void CaptureOverlayTests::annotationToolDoesNotMoveSelection()
 
     QCOMPARE(view->geometry(), QRect(10, 10, 30, 20));
     QVERIFY(overlay.canUndo());
+}
+
+void CaptureOverlayTests::cancelRemovesActiveTextAndCloseIgnoresFurtherInput()
+{
+    {
+        TestableCaptureOverlay overlay(makeSingleScreenResult(120, 80), QRect(0, 0, 120, 80));
+        overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+        overlay.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&overlay));
+        overlay.enterEditing(QRect(10, 10, 80, 40));
+
+        triggerToolbarTool(overlay, CaptureTool::Text);
+        QGraphicsView* view = annotationViewFor(overlay);
+        QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(6, 8));
+        QTest::keyClicks(view->viewport(), QStringLiteral("Draft"));
+        QCOMPARE(sceneItemsOfType<TextAnnotationItem>(view->scene()).size(), 1);
+
+        triggerToolbarCancel(overlay);
+        QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(30, 18));
+
+        QCOMPARE(overlay.state(), CaptureState::Canceled);
+        QVERIFY(!overlay.isVisible());
+        QCOMPARE(sceneItemsOfType<TextAnnotationItem>(view->scene()).size(), 0);
+        QVERIFY(!overlay.canUndo());
+    }
+
+    {
+        TestableCaptureOverlay overlay(makeSingleScreenResult(120, 80), QRect(0, 0, 120, 80));
+        overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+        overlay.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&overlay));
+        overlay.enterEditing(QRect(10, 10, 80, 40));
+
+        triggerToolbarTool(overlay, CaptureTool::Rect);
+        QGraphicsView* view = annotationViewFor(overlay);
+        QTest::mousePress(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(2, 2));
+        QTest::mouseMove(view->viewport(), QPoint(30, 20));
+        QCOMPARE(sceneItemsOfType<RectAnnotationItem>(view->scene()).size(), 1);
+
+        triggerToolbarCancel(overlay);
+        QTest::mouseRelease(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(30, 20));
+
+        QCOMPARE(overlay.state(), CaptureState::Canceled);
+        QVERIFY(!overlay.isVisible());
+        QCOMPARE(sceneItemsOfType<RectAnnotationItem>(view->scene()).size(), 0);
+        QVERIFY(!overlay.canUndo());
+    }
+}
+
+void CaptureOverlayTests::finishedOverlayIgnoresFurtherInputAfterClosing()
+{
+    TestableCaptureOverlay overlay(makeSingleScreenResult(120, 80), QRect(0, 0, 120, 80));
+    overlay.setAttribute(Qt::WA_DeleteOnClose, false);
+    overlay.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&overlay));
+    overlay.enterEditing(QRect(10, 10, 80, 40));
+
+    overlay.addAnnotationItem(new RectAnnotationItem(QRectF(2.0, 2.0, 10.0, 8.0),
+                                                     QPen(Qt::red, 3.0)));
+    QGraphicsView* view = annotationViewFor(overlay);
+    const QRect viewGeometry = view->geometry();
+    const int rectItemCount = sceneItemsOfType<RectAnnotationItem>(view->scene()).size();
+
+    triggerToolbarCopy(overlay);
+    QTest::mousePress(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(20, 20));
+    QTest::mouseMove(view->viewport(), QPoint(30, 25));
+    QTest::mouseRelease(view->viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(30, 25));
+
+    QCOMPARE(overlay.copyCount, 1);
+    QCOMPARE(overlay.state(), CaptureState::Finished);
+    QVERIFY(!overlay.isVisible());
+    QCOMPARE(view->geometry(), viewGeometry);
+    QCOMPARE(sceneItemsOfType<RectAnnotationItem>(view->scene()).size(), rectItemCount);
 }
 
 void CaptureOverlayTests::pinWindowUsesToolTopmostFramelessFlagsAndDeletesOnClose()
