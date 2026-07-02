@@ -92,7 +92,7 @@ qt_add_executable(GlobalMouseDragMonitorTests
 )
 
 target_link_libraries(GlobalMouseDragMonitorTests PRIVATE
-    snapink_platform
+    snapink_core
     Qt::Test
 )
 

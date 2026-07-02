@@ -1,7 +1,7 @@
 #include "PinWindow.h"
 
 #ifdef Q_OS_MACOS
-#include "MacWindowHelper.h"
+#include "../../platform/macos/MacWindowHelper.h"
 #endif
 
 #include <QApplication>

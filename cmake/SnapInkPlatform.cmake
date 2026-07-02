@@ -22,8 +22,8 @@ function(snapink_configure_platform_target target_name)
             ${PROJECT_SOURCE_DIR}/src/core/globalmouse/GlobalMouseDragPlatform_mac.mm
             ${PROJECT_SOURCE_DIR}/src/platform/macos/MacTrayIconHelper.h
             ${PROJECT_SOURCE_DIR}/src/platform/macos/MacTrayIconHelper.mm
-            ${PROJECT_SOURCE_DIR}/src/ui/pin/MacWindowHelper.h
-            ${PROJECT_SOURCE_DIR}/src/ui/pin/MacWindowHelper.mm
+            ${PROJECT_SOURCE_DIR}/src/platform/macos/MacWindowHelper.h
+            ${PROJECT_SOURCE_DIR}/src/platform/macos/MacWindowHelper.mm
         )
 
         find_library(CARBON_LIBRARY Carbon REQUIRED)

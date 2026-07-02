@@ -10,7 +10,7 @@
 #include "../src/ui/pin/PinWindowManager.h"
 #include "../src/ui/tray/TrayController.h"
 #ifdef Q_OS_MACOS
-#include "../src/ui/pin/MacWindowHelper.h"
+#include "../src/platform/macos/MacWindowHelper.h"
 #endif
 
 #include <QImage>

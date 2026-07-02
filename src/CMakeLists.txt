@@ -16,11 +16,7 @@ target_sources(snapink_core PRIVATE
     core/globalmouse/GlobalMouseDragPlatform.h
     core/globalmouse/GlobalMouseDragTracker.cpp
     core/globalmouse/GlobalMouseDragTracker.h
-    core/hotkey/Hotkey.cpp
-    core/hotkey/Hotkey.h
     core/hotkey/HotkeyConfig.h
-    core/hotkey/Hotkey_p.h
-    core/hotkey/HotkeyPlatform.h
 )
 
 target_include_directories(snapink_core PUBLIC
@@ -36,15 +32,24 @@ target_compile_features(snapink_core PUBLIC cxx_std_20)
 
 add_library(snapink_platform STATIC)
 
+target_sources(snapink_platform PRIVATE
+    core/hotkey/Hotkey.cpp
+    core/hotkey/Hotkey.h
+    core/hotkey/Hotkey_p.h
+    core/hotkey/HotkeyPlatform.h
+)
+
 target_include_directories(snapink_platform PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(snapink_platform PUBLIC
-    snapink_core
-    Qt::Core
-    Qt::Gui
-    Qt::Widgets
+target_link_libraries(snapink_platform
+    PUBLIC
+        snapink_core
+        Qt::Core
+        Qt::Gui
+    PRIVATE
+        Qt::Widgets
 )
 
 target_compile_features(snapink_platform PUBLIC cxx_std_20)
