@@ -3,9 +3,9 @@
 #include "CaptureController.h"
 #include "GlobalMouseController.h"
 #include "HotkeyController.h"
-#include "../core/hotkey/HotkeyConfig.h"
-#include "../ui/pin/PinWindowManager.h"
-#include "../ui/tray/TrayController.h"
+#include "core/hotkey/HotkeyConfig.h"
+#include "ui/pin/PinWindowManager.h"
+#include "ui/tray/TrayController.h"
 
 #include <QApplication>
 #include <QCloseEvent>

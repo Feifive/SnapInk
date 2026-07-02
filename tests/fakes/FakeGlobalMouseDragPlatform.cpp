@@ -1,4 +1,4 @@
-#include "../../src/core/globalmouse/GlobalMouseDragPlatform.h"
+#include "core/globalmouse/GlobalMouseDragPlatform.h"
 
 class FakeGlobalMouseDragPlatform final : public GlobalMouseDragPlatform
 {

@@ -1,4 +1,4 @@
-#include "../src/core/capture/CaptureImageComposer.h"
+#include "core/capture/CaptureImageComposer.h"
 
 #include <QColor>
 #include <QImage>

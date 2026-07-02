@@ -1,4 +1,4 @@
-#include "../src/ui/capture/CaptureSelectionModel.h"
+#include "ui/capture/CaptureSelectionModel.h"
 
 #include <QRect>
 #include <QTest>

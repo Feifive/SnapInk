@@ -1,4 +1,4 @@
-#include "../src/core/globalmouse/GlobalMouseDragMonitor.h"
+#include "core/globalmouse/GlobalMouseDragMonitor.h"
 
 #include <QSignalSpy>
 #include <QTest>

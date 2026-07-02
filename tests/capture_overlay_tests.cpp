@@ -1,16 +1,16 @@
-#include "../src/core/capture/CapturedScreen.h"
-#include "../src/app/mainwindow.h"
-#include "../src/app/CaptureController.h"
-#include "../src/app/GlobalMouseController.h"
-#include "../src/app/HotkeyController.h"
-#include "../src/ui/capture/CaptureAnnotation.h"
-#include "../src/ui/capture/CaptureOverlay.h"
-#include "../src/ui/capture/CaptureToolbar.h"
-#include "../src/ui/pin/PinWindow.h"
-#include "../src/ui/pin/PinWindowManager.h"
-#include "../src/ui/tray/TrayController.h"
+#include "core/capture/CapturedScreen.h"
+#include "app/mainwindow.h"
+#include "app/CaptureController.h"
+#include "app/GlobalMouseController.h"
+#include "app/HotkeyController.h"
+#include "ui/capture/CaptureAnnotation.h"
+#include "ui/capture/CaptureOverlay.h"
+#include "ui/capture/CaptureToolbar.h"
+#include "ui/pin/PinWindow.h"
+#include "ui/pin/PinWindowManager.h"
+#include "ui/tray/TrayController.h"
 #ifdef Q_OS_MACOS
-#include "../src/platform/macos/MacWindowHelper.h"
+#include "platform/macos/MacWindowHelper.h"
 #endif
 
 #include <QImage>

@@ -6,7 +6,7 @@
 // safe to run in CI / offscreen environments and do not pollute the global
 // hotkey table.
 
-#include "../src/core/hotkey/HotkeyPlatform.h"
+#include "core/hotkey/HotkeyPlatform.h"
 
 #include <QTest>
 

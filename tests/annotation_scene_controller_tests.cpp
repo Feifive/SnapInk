@@ -1,6 +1,6 @@
-#include "../src/ui/capture/AnnotationSceneController.h"
+#include "ui/capture/AnnotationSceneController.h"
 
-#include "../src/ui/capture/CaptureAnnotation.h"
+#include "ui/capture/CaptureAnnotation.h"
 
 #include <QColor>
 #include <QGraphicsPixmapItem>

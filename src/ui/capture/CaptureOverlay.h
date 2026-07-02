@@ -5,8 +5,8 @@
 #include "CaptureInputController.h"
 #include "CaptureSelectionModel.h"
 #include "CaptureTool.h"
-#include "../../core/capture/CaptureImageComposer.h"
-#include "../../core/capture/CapturedScreen.h"
+#include "core/capture/CaptureImageComposer.h"
+#include "core/capture/CapturedScreen.h"
 
 #include <QCursor>
 #include <QImage>

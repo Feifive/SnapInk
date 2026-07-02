@@ -1,7 +1,7 @@
-#include "../src/ui/capture/CaptureInputController.h"
+#include "ui/capture/CaptureInputController.h"
 
-#include "../src/ui/capture/AnnotationSceneController.h"
-#include "../src/ui/capture/CaptureSelectionModel.h"
+#include "ui/capture/AnnotationSceneController.h"
+#include "ui/capture/CaptureSelectionModel.h"
 
 #include <QGraphicsView>
 #include <QGraphicsItem>

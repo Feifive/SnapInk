@@ -1,7 +1,7 @@
 #include "HotkeyController.h"
 
-#include "../core/hotkey/Hotkey.h"
-#include "../core/hotkey/HotkeyConfig.h"
+#include "core/hotkey/Hotkey.h"
+#include "core/hotkey/HotkeyConfig.h"
 
 #include <QDebug>
 #include <QGuiApplication>

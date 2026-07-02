@@ -1,6 +1,6 @@
 #include "GlobalMouseController.h"
 
-#include "../core/globalmouse/GlobalMouseDragMonitor.h"
+#include "core/globalmouse/GlobalMouseDragMonitor.h"
 
 #include <QDebug>
 #include <QGuiApplication>

@@ -1,7 +1,7 @@
 #include "TrayController.h"
 
 #ifdef Q_OS_MACOS
-#include "../../platform/macos/MacTrayIconHelper.h"
+#include "platform/macos/MacTrayIconHelper.h"
 #endif
 
 #include <QAction>

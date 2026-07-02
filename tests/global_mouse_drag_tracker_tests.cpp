@@ -1,4 +1,4 @@
-#include "../src/core/globalmouse/GlobalMouseDragTracker.h"
+#include "core/globalmouse/GlobalMouseDragTracker.h"
 
 #include <QPoint>
 #include <QTest>

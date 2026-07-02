@@ -1,10 +1,10 @@
 #include "CaptureOverlay.h"
 
 #include "CaptureToolbar.h"
-#include "../../core/clipboard/ClipboardService.h"
-#include "../../core/hotkey/HotkeyConfig.h"
+#include "core/clipboard/ClipboardService.h"
+#include "core/hotkey/HotkeyConfig.h"
 #ifdef Q_OS_MACOS
-#include "../../platform/macos/MacWindowHelper.h"
+#include "platform/macos/MacWindowHelper.h"
 #endif
 
 #include <QDateTime>

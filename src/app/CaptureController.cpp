@@ -1,8 +1,8 @@
 #include "CaptureController.h"
 
-#include "../core/capture/ScreenCaptureService.h"
-#include "../ui/capture/CaptureOverlay.h"
-#include "../ui/pin/PinWindowManager.h"
+#include "core/capture/ScreenCaptureService.h"
+#include "ui/capture/CaptureOverlay.h"
+#include "ui/pin/PinWindowManager.h"
 
 #include <QMessageBox>
 #include <QtAssert>
