@@ -5,11 +5,15 @@
 #include <QWindow>
 
 #import <AppKit/AppKit.h>
+#import <CoreGraphics/CoreGraphics.h>
 
 namespace MacWindowHelper
 {
 
-void configureOverlayWindow(QWidget* widget)
+namespace
+{
+
+void configureOverlayWindow(QWidget* widget, NSWindowLevel level, bool makePanelNonactivating)
 {
     if (widget == nullptr) {
         return;
@@ -34,17 +38,14 @@ void configureOverlayWindow(QWidget* widget)
         return;
     }
 
-    if ([nsWindow isKindOfClass:NSPanel.class]) {
+    if (makePanelNonactivating && [nsWindow isKindOfClass:NSPanel.class]) {
         // Qt::Tool maps to QNSPanel on macOS. Marking the panel as
         // non-activating lets it remain an overlay for another app's active
         // fullscreen Space instead of behaving like a normal app window.
         nsWindow.styleMask = nsWindow.styleMask | NSWindowStyleMaskNonactivatingPanel;
     }
 
-    // Float above normal and fullscreen application windows without entering
-    // system-reserved levels such as screen saver, lock screen, permissions, or
-    // Mission Control.
-    [nsWindow setLevel:NSModalPanelWindowLevel];
+    [nsWindow setLevel:level];
 
     NSWindowCollectionBehavior collectionBehavior = nsWindow.collectionBehavior;
     collectionBehavior &= ~NSWindowCollectionBehaviorMoveToActiveSpace;
@@ -69,6 +70,24 @@ void configureOverlayWindow(QWidget* widget)
     // Keep the Qt tool window visible after SnapInk loses application focus.
     [nsWindow setHidesOnDeactivate:NO];
     [nsWindow setCanHide:NO];
+}
+
+} // namespace
+
+void configureOverlayWindow(QWidget* widget)
+{
+    // Float pin windows above normal and fullscreen application windows without
+    // covering system UI such as the menu bar.
+    configureOverlayWindow(widget, NSModalPanelWindowLevel, true);
+}
+
+void configureCaptureOverlayWindow(QWidget* widget)
+{
+    // Screenshot capture is a temporary modal surface and must cover the whole
+    // captured desktop, including the macOS menu bar and Dock.
+    const NSWindowLevel captureLevel =
+        static_cast<NSWindowLevel>(CGWindowLevelForKey(kCGScreenSaverWindowLevelKey));
+    configureOverlayWindow(widget, captureLevel, false);
 }
 
 } // namespace MacWindowHelper

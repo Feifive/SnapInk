@@ -18,6 +18,7 @@ class CaptureToolbar;
 class QGraphicsItem;
 class QGraphicsView;
 class QPainter;
+class QShowEvent;
 class QWidget;
 
 enum class CaptureState
@@ -83,6 +84,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
+    void showEvent(QShowEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
@@ -160,6 +162,7 @@ private:
     QWidget* m_selectionChromeLayer = nullptr;
     bool m_canceledSignalEmitted = false;
     bool m_terminalActionStarted = false;
+    bool m_nativeOverlayConfigured = false;
 };
 
 #endif // CAPTUREOVERLAY_H

@@ -3,6 +3,9 @@
 #include "CaptureToolbar.h"
 #include "../../core/clipboard/ClipboardService.h"
 #include "../../core/hotkey/HotkeyConfig.h"
+#ifdef Q_OS_MACOS
+#include "../pin/MacWindowHelper.h"
+#endif
 
 #include <QDateTime>
 #include <QDir>
@@ -79,6 +82,9 @@ CaptureOverlay::CaptureOverlay(CaptureResult captureResult,
     , m_selectionChromeLayer(new SelectionChromeLayer(this))
 {
     setWindowFlags(Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::Tool);
+#ifdef Q_OS_MACOS
+    setAttribute(Qt::WA_MacAlwaysShowToolWindow, true);
+#endif
     setAttribute(Qt::WA_DeleteOnClose, true);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
@@ -834,6 +840,18 @@ void CaptureOverlay::contextMenuEvent(QContextMenuEvent* event)
 {
     // Suppress default context menu; right-click is handled in mousePressEvent.
     event->accept();
+}
+
+void CaptureOverlay::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+
+#ifdef Q_OS_MACOS
+    if (!m_nativeOverlayConfigured) {
+        MacWindowHelper::configureCaptureOverlayWindow(this);
+        m_nativeOverlayConfigured = true;
+    }
+#endif
 }
 
 bool CaptureOverlay::eventFilter(QObject* watched, QEvent* event)

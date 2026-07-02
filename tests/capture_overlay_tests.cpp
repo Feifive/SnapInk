@@ -237,6 +237,7 @@ class CaptureOverlayTests : public QObject
 
 private slots:
     void overlayStartsInSelectingState();
+    void overlayUsesMacToolWindowVisibilityHint();
     void overlayEditingRenderUsesSelectionSize();
     void overlayAnnotationsUseSelectionRelativeCoordinates();
     void overlayUndoRedoUpdatesRenderedResult();
@@ -376,6 +377,16 @@ void CaptureOverlayTests::overlayStartsInSelectingState()
 
     QCOMPARE(overlay.state(), CaptureState::Selecting);
     QVERIFY(overlay.renderResultImage().isNull());
+}
+
+void CaptureOverlayTests::overlayUsesMacToolWindowVisibilityHint()
+{
+#ifdef Q_OS_MACOS
+    CaptureOverlay overlay(makeSingleScreenResult(80, 60), QRect(0, 0, 80, 60));
+    QVERIFY(overlay.testAttribute(Qt::WA_MacAlwaysShowToolWindow));
+#else
+    QSKIP("macOS-only window visibility behavior");
+#endif
 }
 
 void CaptureOverlayTests::overlayEditingRenderUsesSelectionSize()
