@@ -23,14 +23,13 @@ jobs:
 
       # ── Configure & Build ─────────────────────────────────
       - name: CMake configure
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
 
       - name: Build all targets
         run: cmake --build build --config Release
 
       # ── Test ──────────────────────────────────────────────
-      # ctest runs every target registered via add_test():
-      #   SnapInkTests + HotkeyMacTests
+      # ctest runs every target registered via add_test().
       - name: Run tests
         run: ctest --test-dir build --output-on-failure
         env:
